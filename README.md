@@ -55,12 +55,12 @@ int main() {
     double dataset[] = { /*... your data ...*/ };
     size_t dataSize = sizeof(dataset)/sizeof(dataset[0]);
     
-    MqsRawDataPoint_t rawData[501];
-    for (int i = 0; i < 501; ++i) {
+    MqsRawDataPoint_t rawData[dataSize]; //insert your own dataSize here. 
+    for (int i = 0; i < dataSize; ++i) {
         rawData[i].phaseAngle = dataset[i];
         rawData[i].impedance = 0.0;  // You can set the impedance to a default value
     }
-    MqsRawDataPoint_t filteredData[501] = {0.0};
+    MqsRawDataPoint_t filteredData[dataSize] = {0.0};
 
     mes_SavgolFilter(rawData, dataSize, filteredData);
     
