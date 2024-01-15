@@ -28,9 +28,6 @@ int main() {
         }else{
             printf("%f, ", filteredData[i].phaseAngle);
         }
-        
-        
-        //printf("%d. %f, ", i, filteredData[i].phaseAngle);
     }
     printf("];\n");
     
