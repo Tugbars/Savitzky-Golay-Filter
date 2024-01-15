@@ -12,9 +12,10 @@ matlabSavgolData = smoothdata(rawData, 'sgolay', windowSize, 'Degree', polynomia
 subplot(2,1,1); % Two rows, one column, first plot
 hold on;
 plot(rawData, 'b', 'DisplayName', 'Original Data');
-plot(yourSavgolData, 'r', 'DisplayName', 'Your Savgol Data', 'LineWidth', 2); % Thicker line for your data
-plot(matlabSavgolData, 'g', 'DisplayName', 'MATLAB Savgol Data', 'LineWidth', 1); % Thinner line for MATLAB data
-
+plot(yourSavgolData, 'r', 'DisplayName', 'Your Savgol Data');
+plot(matlabSavgolData, 'g', 'DisplayName', 'MATLAB Savgol Data');
+plot(yourSavgolData, 'r', 'LineWidth', 1.5, 'DisplayName', 'Your Savgol Data');
+plot(matlabSavgolData, 'g', 'LineWidth', 1, 'DisplayName', 'MATLAB Savgol Data');
 % Find and mark maxima for both datasets
 [~, locsYourSavgol] = findpeaks(yourSavgolData);
 [~, locsMatlabSavgol] = findpeaks(matlabSavgolData);
@@ -37,4 +38,3 @@ xlabel('Data Points');
 ylabel('Difference');
 legend;
 grid on;
-
