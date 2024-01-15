@@ -45,11 +45,12 @@
 #include "mes_savgol.h"
 
 int gramPolyCallCount = 0;
-
+// global values to minimize the stack footprint of GramPoly
 int g_dataIndex;
 uint8_t g_halfWindowSize;
 uint8_t g_targetPoint = 0;
 uint8_t g_derivativeOrder;
+// notifies how many hash map entries the function has registered. 
 int totalHashMapEntries = 0;
 
 /*!
@@ -75,8 +76,8 @@ int totalHashMapEntries = 0;
  * applications, from resource-constrained embedded systems to more robust computing environments.
  *
  */
-#define MAX_POLYNOMIAL_ORDER 3
-#define MAX_ENTRIES 255 // for computing weights for each border case. 
+
+#define MAX_ENTRIES 52 // for computing weights for each border case. This is sufficient for window of 13, order 3
 HashMapEntry memoizationTable[MAX_ENTRIES];
 
 /*!
@@ -279,7 +280,7 @@ double memoizedGramPoly(uint8_t polynomialOrder, uint8_t caseType) {
         memoizationTable[hashIndex].value = value;
         memoizationTable[hashIndex].isOccupied = 1;
         totalHashMapEntries++;
-    }  // Otherwise, the table is full; we can't memoize this value
+    }  // Otherwise, the table is full; we can't memoize this value. You can add your own way to handle this. 
 
     return value;
 }
@@ -478,8 +479,6 @@ void ApplyFilterAtPoint(MqsRawDataPoint_t data[], int index, size_t dataSize, ui
     }
 }
 
-// Compute weights for the time window 2*m+1, for the polyOrder'th least-square
-// point of the derivativeOrder'th derivative
 SavitzkyGolayFilter* SavitzkyGolayFilter_init(SavitzkyGolayFilterConfig conf) {
     SavitzkyGolayFilter* filter = (SavitzkyGolayFilter*)malloc(sizeof(SavitzkyGolayFilter));
     if (!filter) return NULL; 
@@ -492,7 +491,6 @@ SavitzkyGolayFilter* SavitzkyGolayFilter_init(SavitzkyGolayFilterConfig conf) {
         return NULL;
     }
 
-    // Now passing the memoization table and size to ComputeWeights
     ComputeWeights(conf.halfWindowSize, conf.targetPoint, conf.polynomialOrder, conf.derivativeOrder, filter->weights, 1);
     filter->dt = pow(conf.time_step, conf.derivation_order);
 
@@ -562,8 +560,7 @@ void SavitzkyGolayFilter_free(SavitzkyGolayFilter* filter) {
     free(filter);
 }
 
-//currentFilterSweep dogru filterData yerlerini gostersin diye updateler yapiliyor mu calibrationda?
-//code for Mes_sweep.c side. 
+//wrapper function.
 void mes_SavgolFilter(MqsRawDataPoint_t data[], size_t dataSize, MqsRawDataPoint_t filteredData[]){
     initializeMemoizationTable(); 
     SavitzkyGolayFilter *filter = getFilterInstance();
