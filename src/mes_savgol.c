@@ -52,6 +52,29 @@ uint8_t g_targetPoint = 0;
 uint8_t g_derivativeOrder;
 int totalHashMapEntries = 0;
 
+/*!
+ * @brief Performance Trade-off in Savitzky-Golay Filter with Selective Memoization.
+ *
+ * This implementation of the Savitzky-Golay filter demonstrates a significant trade-off 
+ * between memory usage and CPU speed, achieved through selective memoization.
+ *
+ * The effect of memoization is evident when comparing the total number of function calls with 
+ * and without it. For a filter with a window size of 51 and a polynomial order of 4, the total 
+ * number of calls to the GramPoly function reaches 68,927 when memoization is not active 
+ * (MAX_ENTRIES set to 1). However, enabling memoization with MAX_ENTRIES set to 255 drastically 
+ * reduces this number to just 1,326 calls.
+ *
+ * This reduction in function calls translates to a significant decrease in CPU load and 
+ * computational time, showcasing the efficiency gains from memoization. However, it's important 
+ * to note that memoization requires additional memory for storing precomputed values. This 
+ * presents a trade-off: users can optimize the code based on their specific constraints and 
+ * requirements, balancing between memory availability and CPU speed.
+ *
+ * The flexibility to adjust MAX_ENTRIES allows users to tailor the filter's performance to 
+ * their system's capabilities, making this implementation versatile for a wide range of 
+ * applications, from resource-constrained embedded systems to more robust computing environments.
+ *
+ */
 #define MAX_POLYNOMIAL_ORDER 3
 #define MAX_ENTRIES 255 // for computing weights for each border case. 
 HashMapEntry memoizationTable[MAX_ENTRIES];
@@ -98,7 +121,6 @@ int compareGramPolyKeys(GramPolyKey key1, GramPolyKey key2) {
            key1.derivativeOrder == key2.derivativeOrder &&
            key1.caseType == key2.caseType;  // Include caseType in the comparison
 }
-
 
 /*!
  * @brief Calculates a generalized factorial product.
@@ -208,7 +230,6 @@ double GramPoly(uint8_t polynomialOrder) {
     // Catch-all return, function should never reach this point
     return 0.0;
 }
-
 
 /*!
  * @brief Memoization wrapper for the GramPoly function.

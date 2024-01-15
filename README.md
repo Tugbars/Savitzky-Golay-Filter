@@ -5,7 +5,7 @@
 **Source:** The GramPoly function and the general concept were adapted from arntanguy's code: [arntanguy/gram_savitzky_golay](https://github.com/arntanguy/gram_savitzky_golay/tree/master)
 
 ## Overview
-This implementation enhances the traditional Savitzky-Golay filter, utilized for smoothing and differentiating data. Key improvements include global variables to reduce stack footprint and memoization for computational efficiency. The implementation to handle both central and border cases, optimization for stack footprint, memoization strategy, and overall documentation were contributed by the author.
+This implementation optimizes the traditional Savitzky-Golay filter, utilized for smoothing and differentiating data. Key improvements include global variables to reduce stack footprint and memoization for computational efficiency. The implementation to handle both central and border cases, optimization for stack footprint, memoization strategy, and overall documentation were contributed by the author.
 
 ## Core Functionality
 
@@ -52,33 +52,37 @@ To make the filter work for past values, you can adjust the `targetPoint` parame
 #include "mes_savgol.h"
 
 int main() {
-    double dataset[] = { /* ... your data ... */ };
+    double dataset[] = { /*... your data ...*/ };
     size_t dataSize = sizeof(dataset)/sizeof(dataset[0]);
-
-    // Initialize raw data array. I have used my own data structure here. Feel free to use your own datastructure. 
+    
     MqsRawDataPoint_t rawData[501];
     for (int i = 0; i < 501; ++i) {
         rawData[i].phaseAngle = dataset[i];
-        rawData[i].impedance = 0.0;  // Set default impedance value
+        rawData[i].impedance = 0.0;  // You can set the impedance to a default value
     }
-
-    // Array to store filtered data
     MqsRawDataPoint_t filteredData[501] = {0.0};
 
-    // Apply Savitzky-Golay filter
     mes_SavgolFilter(rawData, dataSize, filteredData);
-
-    // Output the filtered data. The formatting of the output is fit to MATLAB's array syntax. 
+    
+    // Output or use the filtered data
     printf("yourSavgolData = [");
     for(int i = 0; i < dataSize; ++i) {
-        printf("%f%s", filteredData[i].phaseAngle, (i < dataSize - 1) ? ", " : "");
+        if(i == dataSize - 1){
+            printf("%f", filteredData[i].phaseAngle);
+        }else{
+            printf("%f, ", filteredData[i].phaseAngle);
+        }
     }
     printf("];\n");
+    
+    cleanupFilterInstance();
 
-    printf("GramPoly was called %d times.\n", gramPolyCallCount);
-    printf("total map entries %d times.\n", totalHashMapEntries);
+    // optional: you may like to link these variables from mes_savgol.c for efficiency min maxing purposes. 
+    // printf("GramPoly was called %d times.\n", gramPolyCallCount);
+    // printf("total map entries %d times.\n", totalHashMapEntries);
     return 0;
 }
+
 ```
 Increasing MAX_ENTRIES to a higher value and monitoring the output of totalHashMapEntries can help determine the optimal number of entries needed for memoization, thereby minimizing CPU load. 
 
