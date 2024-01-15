@@ -8,20 +8,32 @@ windowSize = 13;  % Adjust as necessary
 polynomialOrder = 3;  % Adjust as necessary
 matlabSavgolData = smoothdata(rawData, 'sgolay', windowSize, 'Degree', polynomialOrder);
 
-% Plot both smoothed data sets
-figure;
+% Subplot 1: Plot original data and both smoothed data sets
+subplot(2,1,1); % Two rows, one column, first plot
 hold on;
 plot(rawData, 'b', 'DisplayName', 'Original Data');
 plot(yourSavgolData, 'r', 'DisplayName', 'Your Savgol Data');
 plot(matlabSavgolData, 'g', 'DisplayName', 'MATLAB Savgol Data');
-hold off;
-legend;
 
-% Find and mark maxima
+% Find and mark maxima for both datasets
 [~, locsYourSavgol] = findpeaks(yourSavgolData);
 [~, locsMatlabSavgol] = findpeaks(matlabSavgolData);
-
-hold on;
 plot(locsYourSavgol, yourSavgolData(locsYourSavgol), 'r*', 'MarkerSize', 10);
 plot(locsMatlabSavgol, matlabSavgolData(locsMatlabSavgol), 'g*', 'MarkerSize', 10);
+
+legend;
+title('Comparison of Filtered Data');
+xlabel('Data Points');
+ylabel('Values');
+grid on;
 hold off;
+
+% Subplot 2: Plot the differences between yourSavgolData and matlabSavgolData
+subplot(2,1,2); % Two rows, one column, second plot
+differences = yourSavgolData - matlabSavgolData;
+plot(differences, 'k', 'DisplayName', 'Difference');
+title('Difference between Your Savgol Data and MATLAB Savgol Data');
+xlabel('Data Points');
+ylabel('Difference');
+legend;
+grid on;
