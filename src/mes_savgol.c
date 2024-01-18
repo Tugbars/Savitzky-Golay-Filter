@@ -558,17 +558,15 @@ void SavitzkyGolayFilter_free(SavitzkyGolayFilter** filter) {
 SavitzkyGolayFilter* getFilterInstance(bool reset) {
     static SavitzkyGolayFilter* filterInstance = NULL;
     if (reset && filterInstance != NULL) {
-        SavitzkyGolayFilter_free(&filterInstance);  // Free and reset the instance
+        SavitzkyGolayFilter_free(&filterInstance); 
         return NULL; // Return immediately after resetting
     }
     if (filterInstance == NULL) {
         //printf("new filter Init! \n");
-        filterInstance = initFilter();  // Initialize the filter if it hasn't been already
+        filterInstance = initFilter();  
     }
     return filterInstance;
 }
-
-//yeniden calculatelenmesi lazim filterData'nin ondan oluyor sorun!!!!
 
 void mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, MqsRawDataPoint_t filteredData[]){ //size_t should be int. 
     initializeMemoizationTable(); //her seferinde 0laniyor mu ona bakmak lazim
