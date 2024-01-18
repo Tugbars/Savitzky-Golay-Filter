@@ -535,6 +535,14 @@ SavitzkyGolayFilter* initFilter() {
     return SavitzkyGolayFilter_init(conf);
 }
 
+void SavitzkyGolayFilter_free(SavitzkyGolayFilter** filter) {
+    if (*filter != NULL) {
+        free((*filter)->weights);
+        free(*filter);
+        *filter = NULL;
+    }
+}  
+
 /*!
  * @brief Retrieves a singleton instance of the Savitzky-Golay Filter.
  *
@@ -547,33 +555,27 @@ SavitzkyGolayFilter* initFilter() {
  *
  * @return A pointer to the singleton instance of the Savitzky-Golay Filter.
  */
-SavitzkyGolayFilter* getFilterInstance() {
+SavitzkyGolayFilter* getFilterInstance(bool reset) {
     static SavitzkyGolayFilter* filterInstance = NULL;
+    if (reset && filterInstance != NULL) {
+        SavitzkyGolayFilter_free(&filterInstance);  // Free and reset the instance
+        return NULL; // Return immediately after resetting
+    }
     if (filterInstance == NULL) {
+        //printf("new filter Init! \n");
         filterInstance = initFilter();  // Initialize the filter if it hasn't been already
     }
     return filterInstance;
 }
 
-void SavitzkyGolayFilter_free(SavitzkyGolayFilter* filter) {
-    free(filter->weights);
-    free(filter);
-}
+//yeniden calculatelenmesi lazim filterData'nin ondan oluyor sorun!!!!
 
-//wrapper function.
-void mes_SavgolFilter(MqsRawDataPoint_t data[], size_t dataSize, MqsRawDataPoint_t filteredData[]){
-    initializeMemoizationTable(); 
-    SavitzkyGolayFilter *filter = getFilterInstance();
+void mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, MqsRawDataPoint_t filteredData[]){ //size_t should be int. 
+    initializeMemoizationTable(); //her seferinde 0laniyor mu ona bakmak lazim
+    SavitzkyGolayFilter *filter = getFilterInstance(false);
     
     ApplyFilter(data, dataSize, g_halfWindowSize, g_targetPoint, filter, filteredData);
-    //SavitzkyGolayFilter_free(filter);
+    //next measurements would start with border case coefficients if the filter is not reseted to NULL. 
+    getFilterInstance(true);
 }
-
-void cleanupFilterInstance() {
-    SavitzkyGolayFilter* filter = getFilterInstance();
-    if (filter != NULL) {
-        SavitzkyGolayFilter_free(filter);
-    }
-}
-
 
