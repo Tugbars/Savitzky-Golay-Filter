@@ -544,16 +544,22 @@ void SavitzkyGolayFilter_free(SavitzkyGolayFilter** filter) {
 }  
 
 /*!
- * @brief Retrieves a singleton instance of the Savitzky-Golay Filter.
+ * @brief Manages a singleton instance of the Savitzky-Golay Filter.
  *
- * This function implements the singleton design pattern to manage a single, shared instance 
- * of the Savitzky-Golay Filter. 
+ * Implements a singleton pattern for the Savitzky-Golay Filter. It initializes the filter on 
+ * the first call and returns the same instance on subsequent calls, ensuring a single shared 
+ * instance is used. 
  *
- * If the filter instance has not been created yet (i.e., it is NULL), the function initializes 
- * it using `initFilter`. Subsequent calls to this function will return the existing initialized 
- * instance, thereby avoiding re-initialization and maintaining a single shared instance.
+ * If called with `reset` set to true, the existing filter instance is freed and reset to NULL. 
+ * This is useful when a fresh filter instance is needed for new data processing tasks. 
  *
- * @return A pointer to the singleton instance of the Savitzky-Golay Filter.
+ * Note: The `ApplyFilter` function updates the filter's weights for border cases as its final 
+ * operation. Therefore, if not reset, subsequent calls to `ApplyFilter` will use the filter 
+ * instance while handling the central cases with the last set of weights, which are configured 
+ * for border case processing. 
+ *
+ * @param reset Boolean flag to indicate whether to reset the filter instance.
+ * @return Pointer to the filter instance, or NULL if reset.
  */
 SavitzkyGolayFilter* getFilterInstance(bool reset) {
     static SavitzkyGolayFilter* filterInstance = NULL;
