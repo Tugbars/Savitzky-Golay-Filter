@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "mes_savgol.h"
+#include <time.h>
 
 void printData(const MqsRawDataPoint_t data[], size_t dataSize) {
     printf("%lu yourSavgolData = [", dataSize);
@@ -27,16 +28,20 @@ int main() {
     MqsRawDataPoint_t filteredData[360] = {0.0};
 
     // Set parameters for the Savitzky-Golay filter
-    uint8_t halfWindowSize = 7; // Example half window size
-    uint8_t polynomialOrder = 3; // Example polynomial order
+    uint8_t halfWindowSize = 12; // Example half window size
+    uint8_t polynomialOrder = 4; // Example polynomial order
     uint8_t targetPoint = 0; // Target point for the filter
     uint8_t derivativeOrder = 0; // Derivative order for the filter
-
+  
     // Apply the Savitzky-Golay filter
+    clock_t tic = clock();
+    
     mes_savgolFilter(rawData, dataSize, halfWindowSize, filteredData, polynomialOrder, targetPoint, derivativeOrder);
 
+    clock_t toc = clock();
+
+    printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
     // Print the filtered data
-   
     printData(filteredData, dataSize);
 
     return 0;
