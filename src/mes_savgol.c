@@ -376,7 +376,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
         filteredData[i].phaseAngle = leadingSum;
 
         // Trailing edge
-        ComputeWeights(halfWindowSize, width + i, filter.conf.polynomialOrder, filter.conf.derivativeOrder, weights);
+        //ComputeWeights(halfWindowSize, width + i, filter.conf.polynomialOrder, filter.conf.derivativeOrder, weights);
         float trailingSum = 0.0f;
         for (int j = 0; j < window; ++j) {
             trailingSum += weights[j] * data[endidx - window + j + 1].phaseAngle;
