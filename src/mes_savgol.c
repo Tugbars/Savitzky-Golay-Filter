@@ -31,11 +31,11 @@ static uint8_t g_derivativeOrder;
 // Global MemoizationContext
 static MemoizationContext context;
 
-#define OPTIMIZE_GENFACT
-#define MAX_POLY_ORDER 5
+//#define OPTIMIZE_GENFACT
 
 // Precomputed GenFact values
 #ifdef OPTIMIZE_GENFACT
+#define MAX_POLY_ORDER 4
 static float precomputedGenFactNum[MAX_POLY_ORDER + 1];
 static float precomputedGenFactDen[MAX_POLY_ORDER + 1];
 #endif
@@ -55,10 +55,13 @@ static inline uint32_t combineKey(uint16_t dataIndex, uint8_t polynomialOrder) {
 }
 
 /**
- * @brief Generates a hash value for a given key using a simple modulo operation.
+ * @brief Generates a hash value for a given key using a multiplicative hash function or a simple modulo.
  *
- * This function computes a hash value by taking the modulo of the key with the table size.
- * This ensures that the hash value fits within the bounds of the memoization table.
+ * This function generates a hash value based on the defined hashing strategy.
+ * By default, it uses a simple modulo-based hash. If `USE_ADVANCED_HASH` is defined,
+ * it employs a multiplicative hash function to achieve a more uniform distribution.
+ *
+ * Users can select the desired hash function by defining or undefining the `USE_ADVANCED_HASH` macro.
  *
  * @param key The combined 32-bit key.
  * @param tableSize The size of the hash table.
@@ -152,11 +155,20 @@ static float GramPoly(uint8_t polynomialOrder) {
  * @brief Memoization wrapper for the GramPoly function.
  *
  * This function serves as a memoization wrapper for the GramPoly function,
- * aiming to optimize computational efficiency by storing and reusing
+ * aiming to optimize the computational efficiency by storing and reusing
  * previously calculated values. It uses a hash table for memoization with
  * linear probing to handle collisions.
  *
+ * The function calculates a hash index for the given Gram Polynomial parameters
+ * (data index and polynomial order). If the calculated polynomial value for these
+ * parameters is already stored in the memoization table, it returns the stored value.
+ * Otherwise, it calculates the value using the GramPoly function, stores it in the table,
+ * and then returns the value. This significantly reduces the number of recursive calls
+ * to GramPoly, especially when the same polynomial values are needed multiple times.
+ *
  * @param polynomialOrder The order of the polynomial.
+ * @param ctx Pointer to the GramPolyContext containing necessary parameters.
+ * @param memoCtx Pointer to the MemoizationContext for caching.
  * @return The memoized value of the Gram Polynomial or its derivative.
  */
 static float memoizedGramPoly(uint8_t polynomialOrder) {
@@ -316,13 +328,17 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t
  * This function applies the Savitzky-Golay smoothing filter to a data set based on
  * the provided filter configuration. It handles both central and edge cases within the data set.
  *
- * @param data The array of data points to which the filter is to be applied.
- * @param dataSize The size of the data array.
- * @param halfWindowSize The half window size (m) of the Savitzky-Golay filter.
- * @param targetPoint The point at which the least-squares fit is evaluated.
- * @param filter A pointer to the SavitzkyGolayFilter structure containing filter configuration
- *               and precomputed weights.
+ * For central cases, the filter is applied using a symmetric window centered on each data point.
+ * The filter weights are applied across this window to compute the smoothed value for each central data point.
+ *
+ * For edge cases (leading and trailing edges of the data set), the function computes
+ * specific weights for each border case. These weights account for the asymmetry at the data
+ * set edges. The filter is then applied to these edge cases using the respective calculated weights.
+ *
+ * @param data         The array of data points to which the filter is to be applied.
+ * @param dataSize     The size of the data array.
  * @param filteredData The array where the filtered data points will be stored.
+ * @param filter       Pointer to the SavitzkyGolayFilter structure containing filter configuration and precomputed weights.
  */
 static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize, uint16_t targetPoint, SavitzkyGolayFilter filter, MqsRawDataPoint_t filteredData[]) {
     uint8_t maxHalfWindowSize = (MAX_WINDOW - 1) / 2;
@@ -396,26 +412,50 @@ SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, 
 }
 
 /**
- * @brief Applies the Savitzky-Golay filter to the input data.
+ * @brief Applies the Savitzky-Golay filter to the input data with basic error handling.
  *
- * This is the main function that users should call to apply the Savitzky-Golay filter to their data.
- * It initializes the filter, computes the weights, and applies the filter to the data.
+ * This function applies the Savitzky-Golay smoothing filter to a data set based on
+ * the provided filter configuration. It handles both central and edge cases within the data set.
+ * Basic error checks ensure that input pointers are valid and that the data size is sufficient
+ * for the specified filter configuration.
  *
- * @param data The input array of data points.
- * @param dataSize The number of elements in the input array.
- * @param halfWindowSize The half window size of the filter.
- * @param filteredData The output array to store the filtered data points.
- * @param polynomialOrder The polynomial order used in the filter.
- * @param targetPoint The target point in the window.
- * @param derivativeOrder The derivative order.
+ * @param data           The input array of data points to which the filter is to be applied.
+ * @param dataSize       The number of elements in the input array.
+ * @param filteredData   The output array where the filtered data points will be stored.
+ * @param filter         Pointer to the SavitzkyGolayFilter structure containing filter configuration and precomputed weights.
+ *
+ * @note
+ *   - The function assumes that `filteredData` has been allocated with at least `dataSize` elements.
+ *   - If any input pointer is `NULL` or if `dataSize` is insufficient, the function will log an error message
+ *     and terminate the filtering process early.
  */
-void mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize, MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder, uint8_t targetPoint, uint8_t derivativeOrder) {
-    
+void mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+                      MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
+                      uint8_t targetPoint, uint8_t derivativeOrder) {
+    // Check for NULL problems
+    if (data == NULL || filteredData == NULL) {
+        fprintf(stderr, "Error: NULL problem detected. One or more input arrays are NULL.\n");
+        return;
+    }
+
+    // Check for wrong passed argument problems
+    if (dataSize == 0 || halfWindowSize == 0 ||
+        polynomialOrder >= 2 * halfWindowSize + 1 ||
+        targetPoint > 2 * halfWindowSize ||
+        (2 * halfWindowSize + 1) > dataSize) {
+        fprintf(stderr, "Error: Invalid filter parameters provided.\n");
+        return;
+    }
+
+    // Proceed with filtering if inputs are valid
     gramPolyCallCount = 0;
     initializeMemoizationTable();
+
+    // Initialize the filter configuration
     SavitzkyGolayFilter filter = initFilter(halfWindowSize, polynomialOrder, targetPoint, derivativeOrder, 1.0f);
+
+    // Apply the filter
     ApplyFilter(data, dataSize, halfWindowSize, targetPoint, filter, filteredData);
-    
+
     printf("GramPoly call count after applying filter: %d\n", gramPolyCallCount);
-    
 }
