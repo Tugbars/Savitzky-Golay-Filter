@@ -386,6 +386,60 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
 }
 
 /**
+ * @brief Applies a causal Savitzky-Golay filter to a specific point in a dataset.
+ *
+ * This function is designed for data smoothing using the Savitzky-Golay filter method. 
+ * It is a causal filter, meaning it uses only past values up to the specified window size 
+ * for smoothing. The function handles edge cases with either mirror padding or by utilizing 
+ * a previous dataset. This code below just exists to give an idea. 
+ *
+ * @param data An array of data points where each point is of type MqsRawDataPoint_t.
+ *             This array represents the current dataset to which the filter is applied.
+ * @param index The index in the 'data' array at which the filter is to be applied. The filter
+ *              uses values from 'data' at and before this index, up to the size of the window.
+ * @param dataSize The total number of elements in the 'data' array.
+ * @param halfWindowSize The half-size of the filter window. The actual window size used
+ *                       is computed as (2 * halfWindowSize + 1). The filter uses this number
+ *                       of past values from 'data' for calculating the smoothed value.
+ * @param filter A pointer to a SavitzkyGolayFilter object, which contains the filter weights.
+ * @param filteredData An array where the filtered data points will be stored. It should be
+ *                     pre-allocated with a size at least equal to 'dataSize'.
+ * @param previous An optional array of previous data points, used when the filter needs to access
+ *                 data points before the start of the 'data' array. This is relevant for indices
+ *                 smaller than the window size.
+ * @param usePrevious A boolean flag to determine the behavior for indices smaller than the window size.
+ *                    If true, values from the 'previous' array are used. If false, mirror padding
+ *                    (using data[0]) is applied.
+ */
+/*
+---DEACTIVATED---
+void ApplyFilterAtPoint(MqsRawDataPoint_t data[], int index, size_t dataSize, uint8_t halfWindowSize, SavitzkyGolayFilter* filter, MqsRawDataPoint_t filteredData[], MqsRawDataPoint_t previous[], bool usePrevious) {
+    const int window = 2 * halfWindowSize + 1;
+    double sum = 0.0;
+    if (index < dataSize) {
+        for (int j = 0; j < window; ++j) {
+            int dataIndex = index - window + j;
+            double phaseAngle;
+            if (dataIndex < 0) {
+                if (usePrevious) {
+                    // Use corresponding value from previous[] array
+                    int previousIndex = dataSize + dataIndex; // Equivalent to dataSize - abs(dataIndex)
+                    phaseAngle = previous[previousIndex].phaseAngle;
+                } else {
+                    // Mirror padding
+                    phaseAngle = data[0].phaseAngle;
+                }
+            } else {
+                phaseAngle = data[dataIndex].phaseAngle;
+            }
+            sum += filter->weights[j] * phaseAngle;
+        }
+        filteredData[index].phaseAngle = sum;
+    }
+}
+*/
+
+/**
  * @brief Initializes and configures the Savitzky-Golay filter.
  *
  * This function initializes a Savitzky-Golay filter with specified configuration parameters.
