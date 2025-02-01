@@ -1,7 +1,7 @@
 # C implementation of Least-Squares Smoothing and Differentiation by the Convolution (Savitzky-Golay) Method
 
 **Author:** Tugbars Heptaskin  
-**Date:** 02/01/2024  
+**Date:** 02/01/2025
 **Source:** The GramPoly function and the general concept were adapted from arntanguy's implementation: [arntanguy/gram_savitzky_golay](https://github.com/arntanguy/gram_savitzky_golay/tree/master)
 
 ## Overview
