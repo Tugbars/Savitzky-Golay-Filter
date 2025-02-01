@@ -27,7 +27,7 @@ This implementation optimizes the traditional Savitzky-Golay filter, utilized fo
 - **Filter Application:**
   - Applies the Savitzky-Golay filter to data arrays, smoothly handling both central data points and border cases.
   - In border cases, specifically computes weights for each scenario, ensuring accurate processing at the boundaries of the dataset.
-  - Validated to match the output of Matlab's Savitzky-Golay filter, ensuring reliability and accuracy in various applications.
+  - Validated to **match the output of Matlab's Savitzky-Golay filter**.
   - Adaptable to function as a causal filter for real-time filtering applications. In this mode, the filter uses only past and present data, making it suitable for on-the-fly data processing.
 
 ## Suitability
