@@ -2,7 +2,6 @@
 
 **Author:** Tugbars Heptaskin  
 **Date:** 02/01/2025
-**Source:** The GramPoly function and the general concept were adapted from arntanguy's implementation: [arntanguy/gram_savitzky_golay](https://github.com/arntanguy/gram_savitzky_golay/tree/master)
 
 ## Overview
 This implementation optimizes the traditional Savitzky-Golay filter, utilized for smoothing and differentiating data. Key improvements include global variables to reduce stack footprint and memoization for computational efficiency. The implementation to handle both central and border cases, optimization for stack footprint, memoization strategy, and overall documentation were contributed by the author.
