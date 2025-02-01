@@ -1,13 +1,23 @@
 # C implementation of Least-Squares Smoothing and Differentiation by the Convolution (Savitzky-Golay) Method
 
 **Author:** Tugbars Heptaskin  
-**Date:** 15/01/2024  
+**Date:** 02/01/2024  
 **Source:** The GramPoly function and the general concept were adapted from arntanguy's implementation: [arntanguy/gram_savitzky_golay](https://github.com/arntanguy/gram_savitzky_golay/tree/master)
 
 ## Overview
 This implementation optimizes the traditional Savitzky-Golay filter, utilized for smoothing and differentiating data. Key improvements include global variables to reduce stack footprint and memoization for computational efficiency. The implementation to handle both central and border cases, optimization for stack footprint, memoization strategy, and overall documentation were contributed by the author.
 
 ## Core Functionality
+
+- **Gram Polynomial Evaluation:** 
+  - Iterative vs. Recursive Approach:
+  Recursive Approach:
+  The original implementation computed Gram polynomials using recursion. Although the recursive method directly mirrored the mathematical definition, it incurred significant overhead due to multiple function calls and a larger stack footprint.
+  Iterative Approach:
+  - The current implementation uses dynamic programming to compute Gram polynomials iteratively. This approach reduces the function call overhead and improves speed—benchmarks indicate the iterative method is roughly four times faster than the recursive version.
+  - Memoization:
+  An optional memoization layer (enabled with the ENABLE_MEMOIZATION preprocessor guard) caches computed values of the Gram polynomials for given indices, polynomial orders, and derivative orders. With memoization, the number of repeated calculations is drastically reduced. For example, with a filter window of size 51 and a polynomial order of 4, the number of Gram polynomial evaluations can drop from 
+  68,927 to just 1,326.
 
 - **GramPoly Function:** 
   - The GramPoly function in the code calculates Gram polynomials or their derivatives, which are crucial for determining the coefficients of the least squares fitting polynomial in the Savitzky-Golay filter. The function ensures the polynomial basis functions are orthogonal, meaning each order of the polynomial is independent of the others. This orthogonality 
@@ -20,14 +30,6 @@ This implementation optimizes the traditional Savitzky-Golay filter, utilized fo
   - In border cases, specifically computes weights for each scenario, ensuring accurate processing at the boundaries of the dataset.
   - Validated to match the output of Matlab's Savitzky-Golay filter, ensuring reliability and accuracy in various applications.
   - Adaptable to function as a causal filter for real-time filtering applications. In this mode, the filter uses only past and present data, making it suitable for on-the-fly data processing.
-
-## Optimizations
-- **Minimized Stack Footprint:** Uses global variables for critical parameters, reducing the risk of stack overflows in large datasets or high polynomial orders. I also added the version with no optimization for stack footprint minimization and no memoization.
-- **Memoization for Computational Efficiency:**
-  - Demonstrates a significant balance between memory usage and CPU speed.
-  - With memoization, function calls for a filter with a window size of 51 and a polynomial order of 4 are reduced from 68,927 to just 1,326.
-  - This reduction lowers CPU load and computational time, making the filter more efficient.
-  - The `MAX_ENTRIES` parameter allows flexibility in tuning the balance between memory usage and CPU speed, making this implementation adaptable for diverse system capabilities.
 
 ## Suitability
 Ideal for data analysis, signal processing, and similar fields where effective data smoothing and differentiation are crucial, especially in resource-constrained embedded environments.
