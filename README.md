@@ -55,33 +55,28 @@ To make the filter work for past values, you can adjust the `targetPoint` parame
 
 int main() {
     double dataset[] = { /*... your data ...*/ };
-    size_t dataSize = sizeof(dataset)/sizeof(dataset[0]);
+     size_t dataSize = sizeof(dataset) / sizeof(dataset[0]);
     
-    MqsRawDataPoint_t rawData[dataSize]; //insert your own dataSize here. 
-    for (int i = 0; i < dataSize; ++i) {
+    // Allocate arrays for the raw and filtered data.
+    MqsRawDataPoint_t rawData[dataSize];
+    MqsRawDataPoint_t filteredData[dataSize];
+    for (size_t i = 0; i < dataSize; ++i) {
         rawData[i].phaseAngle = dataset[i];
-        rawData[i].impedance = 0.0;  // You can set the impedance to a default value
+        filteredData[i].phaseAngle = 0.0f;
     }
-    MqsRawDataPoint_t filteredData[dataSize] = {0.0};
 
-    mes_SavgolFilter(rawData, dataSize, filteredData);
-    
-    // Output or use the filtered data
-    printf("yourSavgolData = [");
-    for(int i = 0; i < dataSize; ++i) {
-        if(i == dataSize - 1){
-            printf("%f", filteredData[i].phaseAngle);
-        }else{
-            printf("%f, ", filteredData[i].phaseAngle);
-        }
-    }
-    printf("];\n");
-    
-    cleanupFilterInstance();
+    // Set filter parameters.
+    uint8_t halfWindowSize = 12;
+    uint8_t polynomialOrder = 4;
+    uint8_t targetPoint = 0;
+    uint8_t derivativeOrder = 0;
+  
+    clock_t tic = clock();
+    mes_savgolFilter(rawData, dataSize, halfWindowSize, filteredData, polynomialOrder, targetPoint, derivativeOrder);
+    clock_t toc = clock();
 
-    // optional: you may like to link these variables from mes_savgol.c for efficiency min maxing purposes. 
-    // printf("GramPoly was called %d times.\n", gramPolyCallCount);
-    // printf("total map entries %d times.\n", totalHashMapEntries);
+    printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
+    printData(filteredData, dataSize);
     return 0;
 }
 
