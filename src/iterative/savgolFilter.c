@@ -19,6 +19,12 @@
 #include <time.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <assert.h>
+
+/*-------------------------
+  Logging Macro
+-------------------------*/
+#define LOG_ERROR(fmt, ...) fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
 
 //-------------------------
 // Preprocessor Definitions for Optimized GenFact and Memoization
@@ -457,22 +463,35 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
  * @param targetPoint The target point within the window.
  * @param derivativeOrder Derivative order (0 for smoothing).
  */
-void mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
-                      MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
-                      uint8_t targetPoint, uint8_t derivativeOrder) {
+int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+                     MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
+                     uint8_t targetPoint, uint8_t derivativeOrder) {
+    // Assertions for development to catch invalid parameters early.
+    assert(data != NULL && "Input data pointer must not be NULL");
+    assert(filteredData != NULL && "Filtered data pointer must not be NULL");
+    assert(dataSize > 0 && "Data size must be greater than 0");
+    assert(halfWindowSize > 0 && "Half-window size must be greater than 0");
+    assert((2 * halfWindowSize + 1) <= dataSize && "Filter window size must not exceed data size");
+    assert(polynomialOrder < (2 * halfWindowSize + 1) && "Polynomial order must be less than the filter window size");
+    assert(targetPoint <= (2 * halfWindowSize) && "Target point must be within the filter window");
+    
+    // Runtime checks with error logging.
     if (data == NULL || filteredData == NULL) {
-        fprintf(stderr, "Error: NULL pointer passed to mes_savgolFilter.\n");
-        return;
+        LOG_ERROR("NULL pointer passed to mes_savgolFilter.");
+        return -1;
     }
     if (dataSize == 0 || halfWindowSize == 0 ||
         polynomialOrder >= 2 * halfWindowSize + 1 ||
         targetPoint > 2 * halfWindowSize ||
         (2 * halfWindowSize + 1) > dataSize) {
-        fprintf(stderr, "Error: Invalid filter parameters provided.\n");
-        return;
+        LOG_ERROR("Invalid filter parameters provided: dataSize=%zu, halfWindowSize=%d, polynomialOrder=%d, targetPoint=%d.",
+                  dataSize, halfWindowSize, polynomialOrder, targetPoint);
+        return -2;
     }
+    
     SavitzkyGolayFilter filter = initFilter(halfWindowSize, polynomialOrder, targetPoint, derivativeOrder, 1.0f);
     ApplyFilter(data, dataSize, halfWindowSize, targetPoint, filter, filteredData);
+    
+    return 0;
 }
-
 
