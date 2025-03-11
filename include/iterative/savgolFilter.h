@@ -108,9 +108,9 @@ extern "C" {
  * @param targetPoint  The target point in the filter window.
  * @param derivativeOrder Order of the derivative (0 for smoothing).
  */
-void mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
-                      MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
-                      uint8_t targetPoint, uint8_t derivativeOrder);
+int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+    MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
+    uint8_t targetPoint, uint8_t derivativeOrder);
 
 /**
  * @brief Initializes a Savitzky–Golay filter instance.

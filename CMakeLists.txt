@@ -8,6 +8,14 @@ project(SavitzkyGolayFilter C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+
+# Enable AVX
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-mavx -mfma)
+elseif (CMAKE_C_COMPILER_ID MATCHES "MSVC")
+    add_compile_options(/arch:AVX)
+endif()
+
 # Include directories for header files
 include_directories(${CMAKE_SOURCE_DIR}/include/iterative)
 

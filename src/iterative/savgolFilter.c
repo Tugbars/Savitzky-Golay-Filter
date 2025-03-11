@@ -20,6 +20,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <assert.h>
+#include <immintrin.h> // For SSE/AVX intrinsics
+
+// Ensure alignment for SIMD (32-byte for AVX, 16-byte for SSE)
+#define ALIGNED __attribute__((aligned(32)))
 
 /*-------------------------
   Logging Macro
@@ -245,6 +249,9 @@ static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const Gram
 //-------------------------
 // Weight Calculation Using Gram Polynomials
 //-------------------------
+
+
+
 /**
  * @brief Calculates the weight for a single data index in the filter window.
  *
@@ -295,6 +302,70 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
 }
 
 /**
+ * @brief Computes Savitzky-Golay weights for eight data indices simultaneously using AVX.
+ *
+ * This function calculates the weights for eight data points in parallel, leveraging
+ * 256-bit AVX instructions to improve performance. It computes the weight for each
+ * data index by summing contributions over polynomial orders, similar to the scalar
+ * Weight() function, but processes eight indices at once. The weights are derived from
+ * Gram polynomials evaluated at the data indices and the target point, scaled by a
+ * factor involving generalized factorials.
+ *
+ * The result is stored in a 256-bit vector, which can be written directly to memory
+ * by the caller (e.g., in ComputeWeights()). This vectorized approach is particularly
+ * efficient when the filter window size is large, allowing multiple weights to be
+ * computed in a single pass.
+ *
+ * @param dataIndices Array of 8 data indices (shifted relative to the window center).
+ * @param targetPoint The target point within the window where the fit is evaluated.
+ * @param polynomialOrder The order of the polynomial used for fitting.
+ * @param ctx Pointer to a GramPolyContext containing filter parameters (halfWindowSize, derivativeOrder).
+ * @param weightsOut Pointer to a 256-bit vector (__m256) to store the 8 computed weights.
+ */
+static void WeightVectorized(int dataIndices[8], int targetPoint, uint8_t polynomialOrder, const GramPolyContext* ctx, __m256* weightsOut) {
+    // Initialize a 256-bit vector to accumulate 8 weights, starting at zero.
+    __m256 w = _mm256_setzero_ps();
+
+    // Loop over polynomial orders from 0 to polynomialOrder to compute contributions.
+    for (uint8_t k = 0; k <= polynomialOrder; ++k) {
+        // Compute the scalar Gram polynomial value at the target point (shared across all 8 weights).
+        float part2 = GramPolyIterative(k, targetPoint, ctx);
+
+        // Compute Gram polynomial values for all 8 data indices in parallel and load into a 256-bit vector.
+        // The order in _mm256_set_ps is reversed (high to low) to match AVX register layout.
+        __m256 part1 = _mm256_set_ps(
+            GramPolyIterative(k, dataIndices[7], ctx),
+            GramPolyIterative(k, dataIndices[6], ctx),
+            GramPolyIterative(k, dataIndices[5], ctx),
+            GramPolyIterative(k, dataIndices[4], ctx),
+            GramPolyIterative(k, dataIndices[3], ctx),
+            GramPolyIterative(k, dataIndices[2], ctx),
+            GramPolyIterative(k, dataIndices[1], ctx),
+            GramPolyIterative(k, dataIndices[0], ctx)
+        );
+
+#ifdef OPTIMIZE_GENFACT
+        // Use precomputed generalized factorial ratio for efficiency, scaled by (2k + 1).
+        float factor = (2 * k + 1) * (precomputedGenFactNum[k] / precomputedGenFactDen[k]);
+#else
+        // Compute the generalized factorial ratio on the fly, scaled by (2k + 1).
+        float factor = (2 * k + 1) * (GenFact(2 * ctx->halfWindowSize, k) / GenFact(2 * ctx->halfWindowSize + k + 1, k + 1));
+#endif
+
+        // Broadcast the scalar factor and part2 to 256-bit vectors for element-wise operations.
+        __m256 factorVec = _mm256_set1_ps(factor);
+        __m256 part2Vec = _mm256_set1_ps(part2);
+
+        // Compute w += factor * part1 * part2 for all 8 weights in parallel using fused multiply-add.
+        // This updates the accumulator with the contribution from the current polynomial order.
+        w = _mm256_fmadd_ps(factorVec, _mm256_mul_ps(part1, part2Vec), w);
+    }
+
+    // Store the final 8 weights in the output vector for the caller to use.
+    *weightsOut = w;
+}
+
+/**
  * @brief Computes the Savitzky–Golay weights for the entire filter window.
  *
  * This function calculates the convolution weights used in the Savitzky–Golay filter.
@@ -326,13 +397,32 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t
     ClearGramPolyCache(halfWindowSize, polynomialOrder, derivativeOrder);
 #endif
 
-    // Loop over each index in the filter window.
-    for (int dataIndex = 0; dataIndex < fullWindowSize; ++dataIndex) {
+    // Loop over each index in the filter window using AVX for batches of 8 elements.
+    int i;
+    for (i = 0; i <= fullWindowSize - 8; i += 8) {
+        // Prepare an array of 8 shifted data indices for vectorized weight computation.
+        // Shift each index so that the center of the window corresponds to 0, making
+        // the weight calculation symmetric around the center.
+        int dataIndices[8] = {
+            i - halfWindowSize, i + 1 - halfWindowSize, i + 2 - halfWindowSize, i + 3 - halfWindowSize,
+            i + 4 - halfWindowSize, i + 5 - halfWindowSize, i + 6 - halfWindowSize, i + 7 - halfWindowSize
+        };
+        __m256 w; // 256-bit vector to store 8 weights.
+        // Compute 8 weights simultaneously using a vectorized version of the Weight function.
+        WeightVectorized(dataIndices, targetPoint, polynomialOrder, &ctx, &w);
+        // Store the 8 computed weights into the weights array.
+        _mm256_store_ps(&weights[i], w);
+    }
+
+    // Scalar remainder: Handle any leftover indices not processed by AVX.
+    for (; i < fullWindowSize; ++i) {
         // Shift the dataIndex so that the center of the window corresponds to 0.
         // This makes the weight calculation symmetric around the center.
-        weights[dataIndex] = Weight(dataIndex - halfWindowSize, targetPoint, polynomialOrder, &ctx);
+        weights[i] = Weight(i - halfWindowSize, targetPoint, polynomialOrder, &ctx);
     }
 }
+
+
 
 //-------------------------
 // Filter Initialization
@@ -363,7 +453,7 @@ SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, 
 //-------------------------
 
 /**
- * @brief Applies the Savitzky–Golay filter to the input data.
+ * @brief Applies the Savitzky–Golay filter to the input data with SIMD optimization.
  *
  * The Savitzky–Golay filter performs smoothing (or differentiation) by computing a
  * weighted convolution of the input data. The weights are derived from Gram polynomials,
@@ -397,25 +487,51 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
         printf("Warning: halfWindowSize (%d) exceeds maximum allowed (%d). Adjusting.\n", halfWindowSize, maxHalfWindowSize);
         halfWindowSize = maxHalfWindowSize;
     }
-    
+
     // Calculate the total number of points in the filter window.
     int windowSize = 2 * halfWindowSize + 1;
     int lastIndex = dataSize - 1;
     uint8_t width = halfWindowSize;  // Number of points on either side of the center.
-    
-    // Declare an array to hold the computed weights for the window.
-    static float weights[MAX_WINDOW];
 
     // Step 1: Compute weights for the central window.
+    // Declare an array to hold the computed weights for the window, aligned for SIMD.
+    ALIGNED static float weights[MAX_WINDOW];
     // The weights are computed based on the filter's polynomial and derivative orders.
     ComputeWeights(halfWindowSize, targetPoint, filter.conf.polynomialOrder, filter.conf.derivativeOrder, weights);
 
-    // Step 2: Apply the filter to the central data points using convolution.
+    // Step 2: Apply the filter to the central data points using convolution with SIMD.
     // For each valid window position, multiply each data point by its corresponding weight
-    // and sum the results.
+    // and sum the results, using AVX (256-bit) and SSE (128-bit) for performance.
     for (int i = 0; i <= (int)dataSize - windowSize; ++i) {
-        float sum = 0.0f;
-        for (int j = 0; j < windowSize; ++j) {
+        float sum = 0.0f;  // Accumulator for the convolution sum.
+        int j;
+
+        // Use AVX (256-bit) if windowSize allows and aligned, processing 8 elements at a time.
+#if defined(__AVX__)
+        for (j = 0; j <= windowSize - 8; j += 8) {
+            __m256 w = _mm256_load_ps(&weights[j]); // Load 8 weights into a 256-bit register.
+            __m256 d = _mm256_loadu_ps(&data[i + j].phaseAngle); // Load 8 data points (unaligned for safety).
+            __m256 prod = _mm256_mul_ps(w, d); // Multiply weights and data points element-wise.
+            // Horizontal sum of 8 elements to reduce to a single float.
+            __m128 hi = _mm256_extractf128_ps(prod, 1); // Extract upper 4 floats.
+            __m128 lo = _mm256_castps256_ps128(prod);   // Extract lower 4 floats.
+            __m128 sum128 = _mm_add_ps(hi, lo);         // Add upper and lower halves.
+            sum128 = _mm_hadd_ps(sum128, sum128);       // Horizontal add to reduce to 2 floats.
+            sum128 = _mm_hadd_ps(sum128, sum128);       // Further reduce to 1 float.
+            sum += _mm_cvtss_f32(sum128);              // Add to scalar sum.
+        }
+#endif
+        // Use SSE (128-bit) for remaining elements or if AVX unavailable, processing 4 elements at a time.
+        for (; j <= windowSize - 4; j += 4) {
+            __m128 w = _mm_load_ps(&weights[j]); // Load 4 weights into a 128-bit register.
+            __m128 d = _mm_loadu_ps(&data[i + j].phaseAngle); // Load 4 data points.
+            __m128 prod = _mm_mul_ps(w, d); // Multiply weights and data points element-wise.
+            prod = _mm_hadd_ps(prod, prod); // Horizontal add to reduce 4 floats to 2.
+            prod = _mm_hadd_ps(prod, prod); // Further reduce to 1 float.
+            sum += _mm_cvtss_f32(prod);     // Add to scalar sum.
+        }
+        // Scalar remainder: Handle any leftover elements not processed by SIMD.
+        for (; j < windowSize; ++j) {
             sum += weights[j] * data[i + j].phaseAngle;
         }
         // The filtered value is placed at the center of the current window.
