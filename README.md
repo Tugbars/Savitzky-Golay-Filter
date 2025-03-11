@@ -4,7 +4,11 @@
 **Date:** 02/01/2025
 
 ## Overview
-This implementation optimizes the traditional Savitzky-Golay filter, utilized for smoothing and differentiating data. Key improvements include global variables to reduce stack footprint and memoization for computational efficiency. The implementation to handle both central and border cases, optimization for stack footprint, memoization strategy, and overall documentation were contributed by the author.
+This implementation optimizes the traditional Savitzky-Golay filter, utilized for smoothing and differentiating data. Key improvements include global variables to reduce stack footprint and memoization for computational efficiency. 
+
+The `avx-vectorization` branch extends this foundation by introducing SIMD (Single Instruction, Multiple Data) optimizations using AVX (256-bit) and SSE (128-bit) instructions. This branch enhances performance for large window sizes by vectorizing weight calculations and convolution operations, leveraging modern CPU capabilities. Specifically, it optimizes `ComputeWeights()` to compute 8 weights in parallel and `ApplyFilter()` to process convolution in batches of 8 (AVX) and 4 (SSE) elements, with scalar fallbacks ensuring compatibility with all window sizes. The `main` branch retains the original scalar implementation for simplicity and broad compatibility, while `avx-vectorization` targets users seeking maximum performance on SIMD-capable hardware.
+
+The original scalar implementation remains in the `main` branch, serving as the default, stable version. The `avx-vectorization` branch is provided as an optional enhancement for those who wish to utilize SIMD optimizations, requiring compiler support (e.g., `-mavx`) and compatible hardware.
 
 ## Core Functionality
 
