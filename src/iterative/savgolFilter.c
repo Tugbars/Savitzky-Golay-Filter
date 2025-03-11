@@ -156,6 +156,130 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
     return dp[polynomialOrder][derivativeOrder];
 }
 
+/**
+ * @brief Computes Gram polynomials for 8 data indices simultaneously using AVX.
+ *
+ * This function vectorizes the Gram polynomial computation F(k, d) across 8 data indices,
+ * leveraging 256-bit AVX instructions to improve performance. It mirrors the scalar GramPolyIterative
+ * function but processes 8 indices in parallel, producing a 256-bit vector (__m256) containing
+ * the polynomial values for each index. The computation follows a dynamic programming approach,
+ * building the polynomial values iteratively for orders k = 0 to polynomialOrder and derivative
+ * orders d = 0 to derivativeOrder.
+ *
+ * @param polynomialOrder The polynomial order (k) to compute, ranging from 0 to a maximum value.
+ * @param dataIndices Array of 8 data indices (shifted relative to the window center, e.g., -m to m).
+ * @param ctx Pointer to a GramPolyContext containing filter parameters (halfWindowSize, derivativeOrder).
+ * @return A 256-bit vector (__m256) containing the computed Gram polynomial values F(k, d) for the 8 indices.
+ */
+static __m256 GramPolyVectorized(uint8_t polynomialOrder, const int dataIndices[8], const GramPolyContext* ctx) {
+    // Extract filter parameters from the context structure.
+    uint8_t halfWindowSize = ctx->halfWindowSize;    // Half the window size (m), used in scaling and normalization.
+    uint8_t derivativeOrder = ctx->derivativeOrder;  // Derivative order (d), determines the number of derivative terms.
+
+    // Calculate the size of the dynamic programming array dp_vec in bytes.
+    // - dp_vec[k][d] stores F(k, d) for k = 0 to polynomialOrder and d = 0 to derivativeOrder.
+    // - Each element is a 256-bit vector (__m256, 32 bytes) holding 8 float values.
+    // - Total size: (polynomialOrder + 1) * (derivativeOrder + 1) * sizeof(__m256).
+    size_t dp_size = (polynomialOrder + 1) * (derivativeOrder + 1) * sizeof(__m256);
+
+    // Dynamically allocate dp_vec using _mm_malloc to ensure 32-byte alignment for AVX operations.
+    // - This avoids stack overflow issues that would occur with large polynomialOrder or derivativeOrder.
+    // - _mm_malloc aligns memory to 32 bytes, matching AVX requirements for efficient vector loads/stores.
+    __m256* dp_vec = _mm_malloc(dp_size, 32);
+    if (!dp_vec) {
+        // If allocation fails, log an error and return a zero vector to indicate failure gracefully.
+        LOG_ERROR("Failed to allocate memory for dp_vec in GramPolyVectorized.");
+        return _mm256_setzero_ps();
+    }
+
+    // Predefine common vector constants for efficiency.
+    // - zero: A 256-bit vector of all 0.0f, used for initialization and base cases where d > 0.
+    // - one: A 256-bit vector of all 1.0f, used for the base case where k = 0 and d = 0.
+    __m256 zero = _mm256_setzero_ps();
+    __m256 one = _mm256_set1_ps(1.0f);
+
+    // Base case: k = 0
+    // - For polynomial order k = 0, F(0, d) = 1 if d = 0 (no derivative), 0 otherwise.
+    // - Set dp_vec[d] for all 8 indices simultaneously: all lanes are 1.0f when d = 0, 0.0f when d > 0.
+    for (uint8_t d = 0; d <= derivativeOrder; d++) {
+        dp_vec[d] = (d == 0) ? one : zero;
+    }
+
+    // Early return if polynomialOrder is 0.
+    // - If k = 0, the result is simply F(0, derivativeOrder), already computed above.
+    // - Free memory and return the result to avoid unnecessary computation.
+    if (polynomialOrder == 0) {
+        __m256 result = dp_vec[derivativeOrder];
+        _mm_free(dp_vec);
+        return result;
+    }
+
+    // Load the 8 data indices into a 256-bit vector for vectorized operations.
+    // - dataIndices[0] to dataIndices[7] are cast to floats and packed into dataIndexVec.
+    // - Order is high-to-low (7 to 0) to match AVX register layout for subsequent stores.
+    __m256 dataIndexVec = _mm256_set_ps(
+        (float)dataIndices[7], (float)dataIndices[6], (float)dataIndices[5], (float)dataIndices[4],
+        (float)dataIndices[3], (float)dataIndices[2], (float)dataIndices[1], (float)dataIndices[0]
+    );
+
+    // Precompute the inverse of halfWindowSize as a vector for scaling in k = 1 case.
+    // - 1.0f / halfWindowSize is broadcast to all 8 lanes, used to normalize terms.
+    __m256 hwsInv = _mm256_set1_ps(1.0f / halfWindowSize);
+
+    // Compute k = 1 case: F(1, d) = (1/m) * (x * F(0, d) + d * F(0, d-1)).
+    // - For each derivative order d, compute the term for all 8 indices in parallel.
+    // - dp_vec is a 1D array, so k=1 values start at index derivativeOrder + 1.
+    for (uint8_t d = 0; d <= derivativeOrder; d++) {
+        // term = x * F(0, d), where x is dataIndexVec (8 indices) and F(0, d) is dp_vec[d].
+        __m256 term = _mm256_mul_ps(dataIndexVec, dp_vec[d]);
+        // If d > 0, add the derivative term: d * F(0, d-1), using fused multiply-add for efficiency.
+        if (d > 0) {
+            term = _mm256_fmadd_ps(_mm256_set1_ps((float)d), dp_vec[d - 1], term);
+        }
+        // Scale by 1/m and store in dp_vec for k = 1.
+        dp_vec[(derivativeOrder + 1) + d] = _mm256_mul_ps(hwsInv, term);
+    }
+
+    // Compute k >= 2 cases using the recurrence relation: F(k, d) = a * (x * F(k-1, d) + d * F(k-1, d-1)) - c * F(k-2, d).
+    // - Iterate over polynomial orders k = 2 to polynomialOrder.
+    for (uint8_t k = 2; k <= polynomialOrder; k++) {
+        // Compute scalar coefficients a and c for the recurrence, same for all 8 indices.
+        // - a = (4k - 2) / [k * (2m - k + 1)], scales the current term.
+        // - c = [(k - 1) * (2m + k)] / [k * (2m - k + 1)], weights the previous term.
+        float a = (4.0f * k - 2.0f) / (k * (2.0f * halfWindowSize - k + 1.0f));
+        float c = ((k - 1.0f) * (2.0f * halfWindowSize + k)) / (k * (2.0f * halfWindowSize - k + 1.0f));
+        
+        // Broadcast a and c to 256-bit vectors for vectorized operations across all 8 indices.
+        __m256 aVec = _mm256_set1_ps(a);
+        __m256 cVec = _mm256_set1_ps(c);
+
+        // For each derivative order d, compute F(k, d) for all 8 indices.
+        for (uint8_t d = 0; d <= derivativeOrder; d++) {
+            // term = x * F(k-1, d), where F(k-1, d) is accessed from dp_vec at the previous k index.
+            __m256 term = _mm256_mul_ps(dataIndexVec, dp_vec[(k - 1) * (derivativeOrder + 1) + d]);
+            // If d > 0, add the derivative term: d * F(k-1, d-1).
+            if (d > 0) {
+                term = _mm256_fmadd_ps(_mm256_set1_ps((float)d), dp_vec[(k - 1) * (derivativeOrder + 1) + d - 1], term);
+            }
+            // Compute F(k, d) = a * term - c * F(k-2, d), storing in dp_vec at the current k index.
+            dp_vec[k * (derivativeOrder + 1) + d] = _mm256_sub_ps(
+                _mm256_mul_ps(aVec, term),
+                _mm256_mul_ps(cVec, dp_vec[(k - 2) * (derivativeOrder + 1) + d])
+            );
+        }
+    }
+
+    // Extract the final result: F(polynomialOrder, derivativeOrder) for all 8 indices.
+    // - Located at dp_vec[polynomialOrder * (derivativeOrder + 1) + derivativeOrder] in the 1D array.
+    __m256 result = dp_vec[polynomialOrder * (derivativeOrder + 1) + derivativeOrder];
+
+    // Free the dynamically allocated memory to prevent leaks.
+    _mm_free(dp_vec);
+
+    // Return the 256-bit vector containing the Gram polynomial values for the 8 indices.
+    return result;
+}
+
 //-------------------------
 // Optional Memoization for Gram Polynomial Calculation
 //-------------------------
@@ -323,45 +447,28 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
  * @param weightsOut Pointer to a 256-bit vector (__m256) to store the 8 computed weights.
  */
 static void WeightVectorized(int dataIndices[8], int targetPoint, uint8_t polynomialOrder, const GramPolyContext* ctx, __m256* weightsOut) {
-    // Initialize a 256-bit vector to accumulate 8 weights, starting at zero.
     __m256 w = _mm256_setzero_ps();
-
-    // Loop over polynomial orders from 0 to polynomialOrder to compute contributions.
     for (uint8_t k = 0; k <= polynomialOrder; ++k) {
-        // Compute the scalar Gram polynomial value at the target point (shared across all 8 weights).
-        float part2 = GramPolyIterative(k, targetPoint, ctx);
+        // Use GramPolyVectorized for part1 (no direct memoization yet)
+        __m256 part1 = GramPolyVectorized(k, dataIndices, ctx);
 
-        // Compute Gram polynomial values for all 8 data indices in parallel and load into a 256-bit vector.
-        // The order in _mm256_set_ps is reversed (high to low) to match AVX register layout.
-        __m256 part1 = _mm256_set_ps(
-            GramPolyIterative(k, dataIndices[7], ctx),
-            GramPolyIterative(k, dataIndices[6], ctx),
-            GramPolyIterative(k, dataIndices[5], ctx),
-            GramPolyIterative(k, dataIndices[4], ctx),
-            GramPolyIterative(k, dataIndices[3], ctx),
-            GramPolyIterative(k, dataIndices[2], ctx),
-            GramPolyIterative(k, dataIndices[1], ctx),
-            GramPolyIterative(k, dataIndices[0], ctx)
-        );
+        // Use memoization for part2 (target point)
+#ifdef ENABLE_MEMOIZATION
+        float part2 = MemoizedGramPoly(k, targetPoint, ctx);
+#else
+        float part2 = GramPolyIterative(k, targetPoint, ctx);
+#endif
 
 #ifdef OPTIMIZE_GENFACT
-        // Use precomputed generalized factorial ratio for efficiency, scaled by (2k + 1).
         float factor = (2 * k + 1) * (precomputedGenFactNum[k] / precomputedGenFactDen[k]);
 #else
-        // Compute the generalized factorial ratio on the fly, scaled by (2k + 1).
         float factor = (2 * k + 1) * (GenFact(2 * ctx->halfWindowSize, k) / GenFact(2 * ctx->halfWindowSize + k + 1, k + 1));
 #endif
 
-        // Broadcast the scalar factor and part2 to 256-bit vectors for element-wise operations.
         __m256 factorVec = _mm256_set1_ps(factor);
         __m256 part2Vec = _mm256_set1_ps(part2);
-
-        // Compute w += factor * part1 * part2 for all 8 weights in parallel using fused multiply-add.
-        // This updates the accumulator with the contribution from the current polynomial order.
         w = _mm256_fmadd_ps(factorVec, _mm256_mul_ps(part1, part2Vec), w);
     }
-
-    // Store the final 8 weights in the output vector for the caller to use.
     *weightsOut = w;
 }
 
