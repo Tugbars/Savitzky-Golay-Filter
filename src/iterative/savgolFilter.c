@@ -481,128 +481,170 @@ SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, 
  * @param filteredData Array to store the filtered data points.
  */
 static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize, uint16_t targetPoint, SavitzkyGolayFilter filter, MqsRawDataPoint_t filteredData[]) {
-    // Ensure halfWindowSize does not exceed the maximum allowed value, adjusting if necessary.
+    // Validate and adjust halfWindowSize to ensure it doesn't exceed the maximum allowed window size.
+    // Decision: Cap halfWindowSize to prevent buffer overflows in weights arrays.
     uint8_t maxHalfWindowSize = (MAX_WINDOW - 1) / 2;
     if (halfWindowSize > maxHalfWindowSize) {
         printf("Warning: halfWindowSize (%d) exceeds maximum allowed (%d). Adjusting.\n", halfWindowSize, maxHalfWindowSize);
         halfWindowSize = maxHalfWindowSize;
     }
 
-    // Calculate window size and edge indices.
-    int windowSize = 2 * halfWindowSize + 1;  // Total number of points in the filter window.
-    int lastIndex = dataSize - 1;             // Index of the last data point.
-    uint8_t width = halfWindowSize;           // Number of points on either side of the center.
+    // Compute window parameters: full window size (N = 2m + 1), last data index, and center offset (m).
+    int windowSize = 2 * halfWindowSize + 1;
+    int lastIndex = dataSize - 1;
+    uint8_t width = halfWindowSize;
 
-    // Step 1: Compute weights for the central window.
-    ALIGNED static float weights[MAX_WINDOW]; // Aligned array to hold weights for SIMD access.
-    ComputeWeights(halfWindowSize, targetPoint, filter.conf.polynomialOrder, filter.conf.derivativeOrder, weights);
+    // Step 1: Precompute weights for the central region once, stored in an aligned array for SIMD.
+    // Decision: Use a static array to avoid recomputing weights for each central position, improving efficiency.
+    ALIGNED static float centralWeights[MAX_WINDOW];
+    ComputeWeights(halfWindowSize, targetPoint, filter.conf.polynomialOrder, filter.conf.derivativeOrder, centralWeights);
 
-    // Step 2: Apply filter to central data points using AVX.
-    int i;
-    for (i = 0; i <= (int)dataSize - windowSize - 7; i += 8) { // Process 8 points at a time, ensuring full window fits.
-        __m256 sums = _mm256_setzero_ps(); // Initialize 256-bit vector to accumulate sums for 8 points.
-        for (int j = 0; j < windowSize; j += 8) { // Process window in chunks of 8 for vectorization.
-            // Load 8 weights into a 256-bit register (assumes weights are 32-byte aligned).
-            __m256 w = _mm256_load_ps(&weights[j]);
-            // Load 8 data points (unaligned load for safety, as data may not be aligned).
-            __m256 d = _mm256_loadu_ps(&data[i + j].phaseAngle);
-            // Compute weighted sum for 8 points using fused multiply-add.
-            sums = _mm256_fmadd_ps(w, d, sums);
+    // Step 2: Apply the filter to central data points (where a full window is available).
+    // Flow: Iterate over all positions where the window fits within dataSize, computing the convolution.
+    for (int i = 0; i <= (int)dataSize - windowSize; ++i) {
+        float sum = 0.0f; // Accumulator for the weighted sum.
+        int j;
+
+        // Vectorization (AVX): Process 8 elements at a time using 256-bit registers for performance.
+        // - Load 8 weights and 8 data points, multiply element-wise, and sum horizontally.
+        // - Alignment: centralWeights is aligned (load_ps), data may not be (loadu_ps).
+        // Decision: Use AVX when available to exploit parallelism, falling back to SSE or scalar if needed.
+#if defined(__AVX__)
+        for (j = 0; j <= windowSize - 8; j += 8) {
+            __m256 w = _mm256_load_ps(&centralWeights[j]); // Load 8 weights into a 256-bit vector.
+            __m256 d = _mm256_loadu_ps(&data[i + j].phaseAngle); // Load 8 unaligned data points.
+            __m256 prod = _mm256_mul_ps(w, d); // Element-wise multiplication: w[j+k] * d[i+j+k], k=0..7.
+            // Horizontal sum: Reduce 8 products to 1 scalar value.
+            __m128 hi = _mm256_extractf128_ps(prod, 1); // Upper 4 elements.
+            __m128 lo = _mm256_castps256_ps128(prod);   // Lower 4 elements.
+            __m128 sum128 = _mm_add_ps(hi, lo);         // Sum pairs: 4 elements.
+            sum128 = _mm_hadd_ps(sum128, sum128);       // Sum pairs again: 2 elements.
+            sum128 = _mm_hadd_ps(sum128, sum128);       // Final sum: 1 element.
+            sum += _mm_cvtss_f32(sum128);               // Add to accumulator.
         }
-        // Store the 8 filtered values at the center of each window.
-        _mm256_store_ps(&filteredData[i + width].phaseAngle, sums);
+#endif
+
+        // Vectorization (SSE): Process 4 elements at a time using 128-bit registers for remaining elements.
+        // - Similar to AVX but with fewer elements per iteration.
+        // Decision: Use SSE for smaller chunks or when AVX isn’t available, ensuring broad compatibility.
+        for (; j <= windowSize - 4; j += 4) {
+            __m128 w = _mm_load_ps(&centralWeights[j]); // Load 4 aligned weights.
+            __m128 d = _mm_loadu_ps(&data[i + j].phaseAngle); // Load 4 unaligned data points.
+            __m128 prod = _mm_mul_ps(w, d); // Element-wise multiplication: w[j+k] * d[i+j+k], k=0..3.
+            // Horizontal sum: Reduce 4 products to 1 scalar.
+            prod = _mm_hadd_ps(prod, prod); // Sum pairs: 2 elements.
+            prod = _mm_hadd_ps(prod, prod); // Final sum: 1 element.
+            sum += _mm_cvtss_f32(prod);     // Add to accumulator.
+        }
+
+        // Scalar remainder: Handle any leftover elements not divisible by 4 or 8.
+        // Decision: Ensure correctness by processing all elements, even if vectorization doesn’t cover them.
+        for (; j < windowSize; ++j) {
+            sum += centralWeights[j] * data[i + j].phaseAngle;
+        }
+
+        // Store the result at the center of the window (i + width).
+        // Decision: Omit filter.dt to match the original scalar implementation’s behavior.
+        filteredData[i + width].phaseAngle = sum;
     }
 
-    // Scalar remainder for central region (handles leftover points not fitting in AVX batches).
-    for (; i <= (int)dataSize - windowSize; ++i) {
-        float sum = 0.0f; // Scalar accumulator for convolution.
-        for (int j = 0; j < windowSize; ++j) {
-            sum += weights[j] * data[i + j].phaseAngle; // Compute weighted sum.
+    // Step 3: Handle edge cases (leading and trailing edges) using mirror padding.
+    // Flow: For positions where a full window isn’t available, mirror data and apply weights.
+    ALIGNED static float weights[MAX_WINDOW]; // Reusable weights array for edge computations.
+    ALIGNED float tempWindow[MAX_WINDOW];     // Temporary buffer for mirrored data, aligned for SIMD.
+
+    for (int i = 0; i < width; ++i) {
+        int j;
+
+        // --- Leading Edge ---
+        // Compute weights with targetPoint shifting toward the start (width - i).
+        // Decision: Adjust targetPoint per position to fit the polynomial at the edge, mirroring scalar logic.
+        ComputeWeights(halfWindowSize, width - i, filter.conf.polynomialOrder, filter.conf.derivativeOrder, weights);
+        float leadingSum = 0.0f;
+
+        // Fill tempWindow with mirrored data: reflect points around index 0.
+        // - Indices go from windowSize-1 down to 0 (e.g., for N=5: 4, 3, 2, 1, 0).
+        for (j = 0; j < windowSize; ++j) {
+            int dataIdx = windowSize - j - 1;
+            tempWindow[j] = data[dataIdx].phaseAngle;
         }
-        filteredData[i + width].phaseAngle = sum; // Store result at window center.
-    }
 
-    // Step 3: Precompute weights for edge cases.
-    // 2D array to store weights for each target point in edge regions (assumes MAX_WINDOW_SIZE defined).
-    ALIGNED float edgeWeights[MAX_WINDOW][MAX_WINDOW];
-    for (int k = 0; k < width; ++k) {
-        // Compute weights for each shifted target point in the leading/trailing edges.
-        ComputeWeights(halfWindowSize, width - k, filter.conf.polynomialOrder, filter.conf.derivativeOrder, edgeWeights[k]);
-    }
-
-    // --- Leading Edge ---
-    // Process leading edge points with AVX, handling 8 points simultaneously.
-    for (i = 0; i <= width - 8; i += 8) {
-        __m256 sums = _mm256_setzero_ps(); // Accumulate sums for 8 leading edge points.
-        for (int j = 0; j < windowSize; j += 8) { // Process window in chunks of 8.
-            // Load weights for 8 consecutive target points into 256-bit vectors.
-            __m256 w[8];
-            for (int k = 0; k < 8; ++k) { // Load weights for 8 target points (i to i+7).
-                w[k] = _mm256_load_ps(&edgeWeights[i + k][j]);
-            }
-
-            // Compute mirrored indices and load 8 data points into a 256-bit vector.
-            int indices[8];
-            for (int k = 0; k < 8 && (j + k) < windowSize; ++k) {
-                indices[k] = windowSize - (j + k) - 1; // Reflect data around the start.
-            }
-            __m256 d = _mm256_set_ps(
-                data[indices[7]].phaseAngle, data[indices[6]].phaseAngle, data[indices[5]].phaseAngle, data[indices[4]].phaseAngle,
-                data[indices[3]].phaseAngle, data[indices[2]].phaseAngle, data[indices[1]].phaseAngle, data[indices[0]].phaseAngle
-            );
-
-            // Accumulate weighted sums for 8 target points.
-            for (int k = 0; k < 8; ++k) {
-                sums = _mm256_fmadd_ps(w[k], d, sums); // Fused multiply-add for efficiency.
-            }
+        // Vectorization (AVX): Process 8 mirrored elements at a time.
+        // - tempWindow is aligned, allowing load_ps instead of loadu_ps for better performance.
+#if defined(__AVX__)
+        for (j = 0; j <= windowSize - 8; j += 8) {
+            __m256 w = _mm256_load_ps(&weights[j]); // Load 8 weights.
+            __m256 d = _mm256_load_ps(&tempWindow[j]); // Load 8 mirrored data points.
+            __m256 prod = _mm256_mul_ps(w, d); // Element-wise multiplication.
+            __m128 hi = _mm256_extractf128_ps(prod, 1);
+            __m128 lo = _mm256_castps256_ps128(prod);
+            __m128 sum128 = _mm_add_ps(hi, lo);
+            sum128 = _mm_hadd_ps(sum128, sum128);
+            sum128 = _mm_hadd_ps(sum128, sum128);
+            leadingSum += _mm_cvtss_f32(sum128);
         }
-        // Store the 8 filtered values for the leading edge.
-        _mm256_store_ps(&filteredData[i].phaseAngle, sums);
-    }
+#endif
 
-    // Scalar remainder for leading edge (handles remaining points < 8).
-    for (; i < width; ++i) {
-        float leadingSum = 0.0f; // Scalar accumulator for convolution.
-        for (int j = 0; j < windowSize; ++j) {
-            leadingSum += edgeWeights[i][j] * data[windowSize - j - 1].phaseAngle; // Mirror padding.
+        // Vectorization (SSE): Process 4 mirrored elements at a time.
+        for (; j <= windowSize - 4; j += 4) {
+            __m128 w = _mm_load_ps(&weights[j]); // Load 4 weights.
+            __m128 d = _mm_load_ps(&tempWindow[j]); // Load 4 mirrored data points.
+            __m128 prod = _mm_mul_ps(w, d); // Element-wise multiplication.
+            prod = _mm_hadd_ps(prod, prod);
+            prod = _mm_hadd_ps(prod, prod);
+            leadingSum += _mm_cvtss_f32(prod);
         }
-        filteredData[i].phaseAngle = leadingSum; // Store result.
-    }
 
-    // --- Trailing Edge ---
-    // Process trailing edge points with AVX, handling 8 points simultaneously.
-    for (i = 0; i <= width - 8; i += 8) {
-        __m256 sums = _mm256_setzero_ps(); // Accumulate sums for 8 trailing edge points.
-        for (int j = 0; j < windowSize; j += 8) { // Process window in chunks of 8.
-            // Load 8 weights from the central weights (same as central region).
-            __m256 w = _mm256_load_ps(&weights[j]);
-
-            // Compute mirrored indices and load 8 data points into a 256-bit vector.
-            int indices[8];
-            for (int k = 0; k < 8 && (j + k) < windowSize; ++k) {
-                indices[k] = lastIndex - windowSize + (j + k) + 1; // Reflect data around the end.
-            }
-            __m256 d = _mm256_set_ps(
-                data[indices[7]].phaseAngle, data[indices[6]].phaseAngle, data[indices[5]].phaseAngle, data[indices[4]].phaseAngle,
-                data[indices[3]].phaseAngle, data[indices[2]].phaseAngle, data[indices[1]].phaseAngle, data[indices[0]].phaseAngle
-            );
-
-            // Compute weighted sum for 8 points using fused multiply-add.
-            sums = _mm256_fmadd_ps(w, d, sums);
+        // Scalar remainder for leading edge.
+        for (; j < windowSize; ++j) {
+            leadingSum += weights[j] * tempWindow[j];
         }
-        // Store the 8 filtered values for the trailing edge in reverse order.
-        _mm256_store_ps(&filteredData[lastIndex - i - 7].phaseAngle, sums);
-    }
+        filteredData[i].phaseAngle = leadingSum; // No filter.dt to match scalar.
 
-    // Scalar remainder for trailing edge (handles remaining points < 8).
-    for (; i < width; ++i) {
-        float trailingSum = 0.0f; // Scalar accumulator for convolution.
-        for (int j = 0; j < windowSize; ++j) {
-            trailingSum += weights[j] * data[lastIndex - windowSize + j + 1].phaseAngle; // Mirror padding.
+        // --- Trailing Edge ---
+        // Reuse weights from the last leading edge iteration (targetPoint = 1 when i = width - 1).
+        float trailingSum = 0.0f;
+
+        // Fill tempWindow with mirrored data: use points from lastIndex - windowSize + 1 to lastIndex.
+        // - Indices go from lastIndex - N + 1 to lastIndex (e.g., for N=5, lastIndex=9: 5, 6, 7, 8, 9).
+        for (j = 0; j < windowSize; ++j) {
+            int dataIdx = lastIndex - windowSize + j + 1;
+            tempWindow[j] = data[dataIdx].phaseAngle;
         }
-        filteredData[lastIndex - i].phaseAngle = trailingSum; // Store result.
+
+        // Vectorization (AVX) for trailing edge.
+#if defined(__AVX__)
+        for (j = 0; j <= windowSize - 8; j += 8) {
+            __m256 w = _mm256_load_ps(&weights[j]); // Reuse last leading edge weights.
+            __m256 d = _mm256_load_ps(&tempWindow[j]); // Load 8 mirrored data points.
+            __m256 prod = _mm256_mul_ps(w, d);
+            __m128 hi = _mm256_extractf128_ps(prod, 1);
+            __m128 lo = _mm256_castps256_ps128(prod);
+            __m128 sum128 = _mm_add_ps(hi, lo);
+            sum128 = _mm_hadd_ps(sum128, sum128);
+            sum128 = _mm_hadd_ps(sum128, sum128);
+            trailingSum += _mm_cvtss_f32(sum128);
+        }
+#endif
+
+        // Vectorization (SSE) for trailing edge.
+        for (; j <= windowSize - 4; j += 4) {
+            __m128 w = _mm_load_ps(&weights[j]);
+            __m128 d = _mm_load_ps(&tempWindow[j]);
+            __m128 prod = _mm_mul_ps(w, d);
+            prod = _mm_hadd_ps(prod, prod);
+            prod = _mm_hadd_ps(prod, prod);
+            trailingSum += _mm_cvtss_f32(prod);
+        }
+
+        // Scalar remainder for trailing edge.
+        for (; j < windowSize; ++j) {
+            trailingSum += weights[j] * tempWindow[j];
+        }
+        filteredData[lastIndex - i].phaseAngle = trailingSum; // No filter.dt
     }
 }
+
 
 //-------------------------
 // Main Filter Function with Error Handling
