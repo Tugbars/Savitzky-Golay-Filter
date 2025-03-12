@@ -464,13 +464,24 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t
     // Create a GramPolyContext with the current filter parameters.
     GramPolyContext ctx = { halfWindowSize, targetPoint, derivativeOrder };
 
+    static uint8_t lastHalfWindowSize = 0, lastPolyOrder = 0, lastDerivOrder = 0;
+    static uint16_t lastTargetPoint = 0;
+
     // Calculate the full window size (total number of data points in the filter window).
     uint16_t fullWindowSize = 2 * halfWindowSize + 1;
 
+// Memoization: Only clear cache if parameters have changed
 #ifdef ENABLE_MEMOIZATION
     // Clear the memoization cache to ensure that previous values do not interfere
     // with the current computation. This is necessary when filter parameters change.
-    ClearGramPolyCache(halfWindowSize, polynomialOrder, derivativeOrder);
+    if (halfWindowSize != lastHalfWindowSize || polynomialOrder != lastPolyOrder || 
+        derivativeOrder != lastDerivOrder || targetPoint != lastTargetPoint) {
+        ClearGramPolyCache(halfWindowSize, polynomialOrder, derivativeOrder);
+        lastHalfWindowSize = halfWindowSize;
+        lastPolyOrder = polynomialOrder;
+        lastDerivOrder = derivativeOrder;
+        lastTargetPoint = targetPoint;
+    }
 #endif
 
     // Loop over each index in the filter window using AVX for batches of 8 elements.
