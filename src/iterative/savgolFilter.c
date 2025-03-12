@@ -30,13 +30,6 @@
 -------------------------*/
 #define LOG_ERROR(fmt, ...) fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
 
-/// Maximum supported polynomial order for optimized GenFact precomputation.
-#define MAX_POLY_ORDER 6
-#define MAX_HALF_WINDOW MAX_WINDOW/2 + 1
-/// Precomputed numerator factors for GenFact.
-// Lookup table: [halfWindowSize][k][0: numerator, 1: denominator]
-static float genFactLookup[MAX_WINDOW/2 + 1][MAX_POLY_ORDER + 1][2];
-
 //-------------------------
 // Preprocessor Definitions for Memoization
 //-------------------------
@@ -45,32 +38,24 @@ static float genFactLookup[MAX_WINDOW/2 + 1][MAX_POLY_ORDER + 1][2];
 #define ENABLE_MEMOIZATION
 
 /**
- * @brief Compute the generalized factorial (GenFact) for a given term.
+ * @brief Computes the natural logarithm of the generalized factorial.
+ *
+ * This function calculates the sum of logarithms for the product of consecutive integers
+ * from (upperLimit - termCount + 1) to upperLimit, avoiding direct multiplication to
+ * prevent overflow and improve numerical stability.
  *
  * @param upperLimit The upper limit of the product.
  * @param termCount The number of terms in the product.
- * @return The computed generalized factorial as a float.
+ * @return The natural logarithm of the generalized factorial as a double.
  */
-static inline float GenFact(uint8_t upperLimit, uint8_t termCount) {
-    float product = 1.0f;
-    for (uint8_t j = (upperLimit - termCount) + 1; j <= upperLimit; j++) {
-        product *= j;
+static inline double logGenFact(uint8_t upperLimit, uint8_t termCount) {
+    double log_product = 0.0;
+    for (uint8_t j = upperLimit - termCount + 1; j <= upperLimit; j++) {
+        log_product += log((double)j);
     }
-    return product;
+    return log_product;
 }
 
-//-------------------------
-// Optimized GenFact Precomputation
-//-------------------------
-// Constructor to initialize the lookup table
-__attribute__((constructor)) static void init_genFact_lookup(void) {
-    for (uint8_t m = 0; m <= MAX_HALF_WINDOW; m++) {
-        for (uint8_t k = 0; k <= MAX_POLY_ORDER; k++) {
-            genFactLookup[m][k][0] = GenFact(2 * m, k);              // Numerator
-            genFactLookup[m][k][1] = GenFact(2 * m + k + 1, k + 1);  // Denominator
-        }
-    }
-}
 //-------------------------
 // Iterative Gram Polynomial Calculation
 //-------------------------
@@ -360,10 +345,11 @@ static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const Gram
  * Gram polynomials over all polynomial orders k (from 0 to polynomialOrder). For each order k:
  * - Evaluates 'part1': Gram polynomial at the data index with derivative order 0.
  * - Evaluates 'part2': Gram polynomial at the target point with the specified derivative order.
- * - Multiplies these by a precomputed factor derived from generalized factorials and accumulates the result.
+ * - Computes a scaling factor using the logarithmic generalized factorial method and accumulates the result.
  *
- * The function uses memoization for Gram polynomials if enabled and always uses a precomputed lookup table
- * for the generalized factorial ratios. If inputs exceed the precomputed range, it falls back to on-the-fly computation.
+ * The function uses memoization for Gram polynomials if enabled. The scaling factor is calculated
+ * on-the-fly using logarithms to ensure numerical stability, eliminating the need for a precomputed
+ * lookup table.
  *
  * @param dataIndex The shifted data index (relative to the window center).
  * @param targetPoint The target point within the window where the fit is evaluated.
@@ -390,27 +376,22 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
         float part2 = GramPolyIterative(k, targetPoint, ctx);
 #endif
 
-        // Compute the factor using precomputed values from the lookup table.
-        float factor;
-        if (ctx->halfWindowSize <= MAX_HALF_WINDOW && k <= MAX_POLY_ORDER) {
-            // Use precomputed numerator and denominator from the lookup table.
-            float numerator = genFactLookup[ctx->halfWindowSize][k][0];
-            float denominator = genFactLookup[ctx->halfWindowSize][k][1];
-            factor = (2 * k + 1) * (numerator / denominator);
-        } else {
-            // Fallback: Compute on-the-fly if inputs exceed precomputed range.
-            float numerator = GenFact(2 * ctx->halfWindowSize, k);
-            float denominator = GenFact(2 * ctx->halfWindowSize + k + 1, k + 1);
-            factor = (2 * k + 1) * (numerator / denominator);
-        }
+        // Compute the logarithmic terms for numerator and denominator of the scaling factor.
+        double log_num = logGenFact(2 * ctx->halfWindowSize, k);
+        double log_den = logGenFact(2 * ctx->halfWindowSize + k + 1, k + 1);
 
-        // Accumulate the contribution to the weight.
-        w += factor * part1 * part2;
+        // Compute log_factor = log(2k + 1) + log_num - log_den
+        double log_factor = log(2.0 * k + 1.0) + log_num - log_den;
+
+        // Exponentiate to get the scaling factor
+        double factor = exp(log_factor);
+
+        // Accumulate the contribution to the weight using double precision for stability, then cast to float.
+        w += (float)(factor * (double)part1 * (double)part2);
     }
 
     return w;  // Return the final computed weight.
 }
-
 /**
  * @brief Computes Savitzky-Golay weights for eight data indices simultaneously using AVX.
  *
@@ -419,11 +400,11 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
  * polynomial order k (from 0 to polynomialOrder):
  * - Computes 'part1': Vectorized Gram polynomial for eight data indices (derivative order 0).
  * - Computes 'part2': Scalar Gram polynomial at the target point, broadcasted to all eight lanes.
- * - Scales by a precomputed factor involving generalized factorials, also broadcasted.
+ * - Scales by a factor computed on-the-fly using logarithmic generalized factorials, broadcasted to all lanes.
  * - Accumulates results using fused multiply-add (FMA) operations.
  *
- * The function uses memoization for Gram polynomials if enabled and always uses a precomputed lookup table
- * for the generalized factorial ratios. If inputs exceed the precomputed range, it falls back to on-the-fly computation.
+ * The function uses memoization for Gram polynomials if enabled. The scaling factor is calculated
+ * using logarithms to ensure numerical stability, eliminating the need for a precomputed lookup table.
  *
  * @param dataIndices Array of 8 data indices (shifted relative to the window center).
  * @param targetPoint The target point within the window where the fit is evaluated.
@@ -441,26 +422,17 @@ static void WeightVectorized(int dataIndices[8], int targetPoint, uint8_t polyno
         __m256 part1 = GramPolyVectorized(k, dataIndices, ctx);
 
         // Compute part2: Scalar Gram polynomial at targetPoint (reused across all eight indices).
-        // Use memoization if enabled to avoid redundant computation.
 #ifdef ENABLE_MEMOIZATION
         float part2 = MemoizedGramPoly(k, targetPoint, ctx);
 #else
         float part2 = GramPolyIterative(k, targetPoint, ctx);
 #endif
 
-        // Compute the factor using precomputed values from the lookup table.
-        float factor;
-        if (ctx->halfWindowSize <= MAX_HALF_WINDOW && k <= MAX_POLY_ORDER) {
-            // Use precomputed numerator and denominator from the lookup table.
-            float numerator = genFactLookup[ctx->halfWindowSize][k][0];
-            float denominator = genFactLookup[ctx->halfWindowSize][k][1];
-            factor = (2 * k + 1) * (numerator / denominator);
-        } else {
-            // Fallback: Compute on-the-fly if inputs exceed precomputed range.
-            float numerator = GenFact(2 * ctx->halfWindowSize, k);
-            float denominator = GenFact(2 * ctx->halfWindowSize + k + 1, k + 1);
-            factor = (2 * k + 1) * (numerator / denominator);
-        }
+        // Compute logarithmic terms for the scaling factor.
+        double log_num = logGenFact(2 * ctx->halfWindowSize, k);
+        double log_den = logGenFact(2 * ctx->halfWindowSize + k + 1, k + 1);
+        double log_factor = log(2.0 * k + 1.0) + log_num - log_den;
+        float factor = (float)exp(log_factor);
 
         // Broadcast scalar values to 256-bit vectors for vectorized operations.
         __m256 factorVec = _mm256_set1_ps(factor);  // All eight lanes set to factor.
