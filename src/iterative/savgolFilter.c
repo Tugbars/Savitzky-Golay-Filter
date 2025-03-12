@@ -8,7 +8,7 @@
  * and (optionally) an optimized precomputation for generalized factorial (GenFact) values.
  *
  * Author: Tugbars Heptaskin
- * Date: 2025-02-01
+ * Date: 2025-03-12
  */
 
 #include "savgolFilter.h"
@@ -30,52 +30,20 @@
 -------------------------*/
 #define LOG_ERROR(fmt, ...) fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
 
-//-------------------------
-// Preprocessor Definitions for Optimized GenFact and Memoization
-//-------------------------
-
-#ifdef OPTIMIZE_GENFACT
 /// Maximum supported polynomial order for optimized GenFact precomputation.
-#define MAX_POLY_ORDER 4
+#define MAX_POLY_ORDER 6
+#define MAX_HALF_WINDOW MAX_WINDOW/2 + 1
 /// Precomputed numerator factors for GenFact.
-static float precomputedGenFactNum[MAX_POLY_ORDER + 1];
-/// Precomputed denominator factors for GenFact.
-static float precomputedGenFactDen[MAX_POLY_ORDER + 1];
-#endif
+// Lookup table: [halfWindowSize][k][0: numerator, 1: denominator]
+static float genFactLookup[MAX_WINDOW/2 + 1][MAX_POLY_ORDER + 1][2];
+
+//-------------------------
+// Preprocessor Definitions for Memoization
+//-------------------------
 
 // Uncomment the following line to enable memoization of Gram polynomial calculations.
 #define ENABLE_MEMOIZATION
 
-//-------------------------
-// Optimized GenFact Precomputation
-//-------------------------
-#ifdef OPTIMIZE_GENFACT
-/**
- * @brief Precompute generalized factorial numerators and denominators.
- *
- * This function precomputes the numerator and denominator factors for the generalized factorial
- * used in weight calculations.
- *
- * @param halfWindowSize Half-window size used in the filter.
- * @param polynomialOrder Order of the polynomial.
- */
-static void PrecomputeGenFacts(uint8_t halfWindowSize, uint8_t polynomialOrder) {
-    uint32_t upperLimitNum = 2 * halfWindowSize;
-    for (uint8_t k = 0; k <= polynomialOrder; ++k) {
-        float numProduct = 1.0f;
-        for (uint8_t j = (upperLimitNum - k) + 1; j <= upperLimitNum; j++) {
-            numProduct *= j;
-        }
-        precomputedGenFactNum[k] = numProduct;
-        uint32_t upperLimitDen = 2 * halfWindowSize + k + 1;
-        float denProduct = 1.0f;
-        for (uint8_t j = (upperLimitDen - (k + 1)) + 1; j <= upperLimitDen; j++) {
-            denProduct *= j;
-        }
-        precomputedGenFactDen[k] = denProduct;
-    }
-}
-#else
 /**
  * @brief Compute the generalized factorial (GenFact) for a given term.
  *
@@ -90,8 +58,19 @@ static inline float GenFact(uint8_t upperLimit, uint8_t termCount) {
     }
     return product;
 }
-#endif
 
+//-------------------------
+// Optimized GenFact Precomputation
+//-------------------------
+// Constructor to initialize the lookup table
+__attribute__((constructor)) static void init_genFact_lookup(void) {
+    for (uint8_t m = 0; m <= MAX_HALF_WINDOW; m++) {
+        for (uint8_t k = 0; k <= MAX_POLY_ORDER; k++) {
+            genFactLookup[m][k][0] = GenFact(2 * m, k);              // Numerator
+            genFactLookup[m][k][1] = GenFact(2 * m + k + 1, k + 1);  // Denominator
+        }
+    }
+}
 //-------------------------
 // Iterative Gram Polynomial Calculation
 //-------------------------
@@ -374,101 +353,125 @@ static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const Gram
 // Weight Calculation Using Gram Polynomials
 //-------------------------
 
-
-
 /**
- * @brief Calculates the weight for a single data index in the filter window.
+ * @brief Calculates the weight for a single data index in the Savitzky-Golay filter window.
  *
- * This function computes the weight for a given data point by summing over Gram polynomials.
- * For each polynomial order k from 0 to polynomialOrder, it computes two parts:
- * - part1: The Gram polynomial evaluated at the data index (with derivative order 0).
- * - part2: The Gram polynomial evaluated at the target point (with the derivative order from the context).
+ * This function computes the weight for a specific data point by summing contributions from
+ * Gram polynomials over all polynomial orders k (from 0 to polynomialOrder). For each order k:
+ * - Evaluates 'part1': Gram polynomial at the data index with derivative order 0.
+ * - Evaluates 'part2': Gram polynomial at the target point with the specified derivative order.
+ * - Multiplies these by a precomputed factor derived from generalized factorials and accumulates the result.
  *
- * Each term is multiplied by a factor that involves a generalized factorial ratio.
- * Depending on preprocessor settings, the function uses either the memoized version or the
- * iterative computation directly.
+ * The function uses memoization for Gram polynomials if enabled and always uses a precomputed lookup table
+ * for the generalized factorial ratios. If inputs exceed the precomputed range, it falls back to on-the-fly computation.
  *
  * @param dataIndex The shifted data index (relative to the window center).
- * @param targetPoint The target point within the window.
- * @param polynomialOrder The order of the polynomial.
- * @param ctx Pointer to a GramPolyContext containing filter parameters.
+ * @param targetPoint The target point within the window where the fit is evaluated.
+ * @param polynomialOrder The maximum order of the polynomial used in the filter.
+ * @param ctx Pointer to a GramPolyContext containing filter parameters (e.g., halfWindowSize, derivativeOrder).
  * @return The computed weight for the data index.
  */
 static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, const GramPolyContext* ctx) {
-    float w = 0.0f;  // Initialize weight accumulator.
-    
-    // Loop over polynomial orders from 0 to polynomialOrder.
+    float w = 0.0f;  // Initialize weight accumulator to zero.
+
+    // Iterate over polynomial orders from 0 to polynomialOrder.
     for (uint8_t k = 0; k <= polynomialOrder; ++k) {
+        // Compute part1: Gram polynomial at dataIndex with derivative order 0.
 #ifdef ENABLE_MEMOIZATION
-        // If memoization is enabled, use the cached version.
-        float part1 = MemoizedGramPoly(k, dataIndex, ctx);   // Evaluate at data point (derivative order = 0)
-        float part2 = MemoizedGramPoly(k, targetPoint, ctx);   // Evaluate at target point (with derivative order from ctx)
+        float part1 = MemoizedGramPoly(k, dataIndex, ctx);
 #else
-        // Otherwise, compute the Gram polynomial iteratively without caching.
         float part1 = GramPolyIterative(k, dataIndex, ctx);
-        float part2 = GramPolyIterative(k, targetPoint, ctx);
 #endif
 
-#ifdef OPTIMIZE_GENFACT
-        // If optimized GenFact is enabled, use precomputed numerator/denominator.
-        float factor = (2 * k + 1) * (precomputedGenFactNum[k] / precomputedGenFactDen[k]);
-#else
-        // Otherwise, compute the generalized factorial ratio on the fly.
-        float factor = (2 * k + 1) * (GenFact(2 * ctx->halfWindowSize, k) /
-                                      GenFact(2 * ctx->halfWindowSize + k + 1, k + 1));
-#endif
-
-        // Accumulate the weighted contribution.
-        w += factor * part1 * part2;
-    }
-    
-    return w;
-}
-
-/**
- * @brief Computes Savitzky-Golay weights for eight data indices simultaneously using AVX.
- *
- * This function calculates the weights for eight data points in parallel, leveraging
- * 256-bit AVX instructions to improve performance. It computes the weight for each
- * data index by summing contributions over polynomial orders, similar to the scalar
- * Weight() function, but processes eight indices at once. The weights are derived from
- * Gram polynomials evaluated at the data indices and the target point, scaled by a
- * factor involving generalized factorials.
- *
- * The result is stored in a 256-bit vector, which can be written directly to memory
- * by the caller (e.g., in ComputeWeights()). This vectorized approach is particularly
- * efficient when the filter window size is large, allowing multiple weights to be
- * computed in a single pass.
- *
- * @param dataIndices Array of 8 data indices (shifted relative to the window center).
- * @param targetPoint The target point within the window where the fit is evaluated.
- * @param polynomialOrder The order of the polynomial used for fitting.
- * @param ctx Pointer to a GramPolyContext containing filter parameters (halfWindowSize, derivativeOrder).
- * @param weightsOut Pointer to a 256-bit vector (__m256) to store the 8 computed weights.
- */
-static void WeightVectorized(int dataIndices[8], int targetPoint, uint8_t polynomialOrder, const GramPolyContext* ctx, __m256* weightsOut) {
-    __m256 w = _mm256_setzero_ps();
-    for (uint8_t k = 0; k <= polynomialOrder; ++k) {
-        // Use GramPolyVectorized for part1 (no direct memoization yet)
-        __m256 part1 = GramPolyVectorized(k, dataIndices, ctx);
-
-        // Use memoization for part2 (target point)
+        // Compute part2: Gram polynomial at targetPoint with the derivative order from ctx.
 #ifdef ENABLE_MEMOIZATION
         float part2 = MemoizedGramPoly(k, targetPoint, ctx);
 #else
         float part2 = GramPolyIterative(k, targetPoint, ctx);
 #endif
 
-#ifdef OPTIMIZE_GENFACT
-        float factor = (2 * k + 1) * (precomputedGenFactNum[k] / precomputedGenFactDen[k]);
+        // Compute the factor using precomputed values from the lookup table.
+        float factor;
+        if (ctx->halfWindowSize <= MAX_HALF_WINDOW && k <= MAX_POLY_ORDER) {
+            // Use precomputed numerator and denominator from the lookup table.
+            float numerator = genFactLookup[ctx->halfWindowSize][k][0];
+            float denominator = genFactLookup[ctx->halfWindowSize][k][1];
+            factor = (2 * k + 1) * (numerator / denominator);
+        } else {
+            // Fallback: Compute on-the-fly if inputs exceed precomputed range.
+            float numerator = GenFact(2 * ctx->halfWindowSize, k);
+            float denominator = GenFact(2 * ctx->halfWindowSize + k + 1, k + 1);
+            factor = (2 * k + 1) * (numerator / denominator);
+        }
+
+        // Accumulate the contribution to the weight.
+        w += factor * part1 * part2;
+    }
+
+    return w;  // Return the final computed weight.
+}
+
+/**
+ * @brief Computes Savitzky-Golay weights for eight data indices simultaneously using AVX.
+ *
+ * This function calculates weights for eight data points in parallel using 256-bit AVX instructions,
+ * improving performance over the scalar Weight() function for large window sizes. For each
+ * polynomial order k (from 0 to polynomialOrder):
+ * - Computes 'part1': Vectorized Gram polynomial for eight data indices (derivative order 0).
+ * - Computes 'part2': Scalar Gram polynomial at the target point, broadcasted to all eight lanes.
+ * - Scales by a precomputed factor involving generalized factorials, also broadcasted.
+ * - Accumulates results using fused multiply-add (FMA) operations.
+ *
+ * The function uses memoization for Gram polynomials if enabled and always uses a precomputed lookup table
+ * for the generalized factorial ratios. If inputs exceed the precomputed range, it falls back to on-the-fly computation.
+ *
+ * @param dataIndices Array of 8 data indices (shifted relative to the window center).
+ * @param targetPoint The target point within the window where the fit is evaluated.
+ * @param polynomialOrder The maximum order of the polynomial used in the filter.
+ * @param ctx Pointer to a GramPolyContext containing filter parameters (e.g., halfWindowSize, derivativeOrder).
+ * @param weightsOut Pointer to a 256-bit vector (__m256) to store the 8 computed weights.
+ */
+static void WeightVectorized(int dataIndices[8], int targetPoint, uint8_t polynomialOrder, const GramPolyContext* ctx, __m256* weightsOut) {
+    __m256 w = _mm256_setzero_ps();  // Initialize 256-bit weight accumulator to zero for all eight indices.
+
+    // Iterate over polynomial orders from 0 to polynomialOrder.
+    for (uint8_t k = 0; k <= polynomialOrder; ++k) {
+        // Compute part1: Vectorized Gram polynomial for eight data indices.
+        // Returns a __m256 vector with F(k, dataIndices[0..7], 0).
+        __m256 part1 = GramPolyVectorized(k, dataIndices, ctx);
+
+        // Compute part2: Scalar Gram polynomial at targetPoint (reused across all eight indices).
+        // Use memoization if enabled to avoid redundant computation.
+#ifdef ENABLE_MEMOIZATION
+        float part2 = MemoizedGramPoly(k, targetPoint, ctx);
 #else
-        float factor = (2 * k + 1) * (GenFact(2 * ctx->halfWindowSize, k) / GenFact(2 * ctx->halfWindowSize + k + 1, k + 1));
+        float part2 = GramPolyIterative(k, targetPoint, ctx);
 #endif
 
-        __m256 factorVec = _mm256_set1_ps(factor);
-        __m256 part2Vec = _mm256_set1_ps(part2);
+        // Compute the factor using precomputed values from the lookup table.
+        float factor;
+        if (ctx->halfWindowSize <= MAX_HALF_WINDOW && k <= MAX_POLY_ORDER) {
+            // Use precomputed numerator and denominator from the lookup table.
+            float numerator = genFactLookup[ctx->halfWindowSize][k][0];
+            float denominator = genFactLookup[ctx->halfWindowSize][k][1];
+            factor = (2 * k + 1) * (numerator / denominator);
+        } else {
+            // Fallback: Compute on-the-fly if inputs exceed precomputed range.
+            float numerator = GenFact(2 * ctx->halfWindowSize, k);
+            float denominator = GenFact(2 * ctx->halfWindowSize + k + 1, k + 1);
+            factor = (2 * k + 1) * (numerator / denominator);
+        }
+
+        // Broadcast scalar values to 256-bit vectors for vectorized operations.
+        __m256 factorVec = _mm256_set1_ps(factor);  // All eight lanes set to factor.
+        __m256 part2Vec = _mm256_set1_ps(part2);    // All eight lanes set to part2.
+
+        // Accumulate weights using FMA: w = w + (factorVec * part1 * part2Vec).
+        // Computes w[i] += factor * part1[i] * part2 for i=0..7 in parallel.
         w = _mm256_fmadd_ps(factorVec, _mm256_mul_ps(part1, part2Vec), w);
     }
+
+    // Store the final weights in the output vector.
     *weightsOut = w;
 }
 
@@ -491,12 +494,6 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t
 
     // Calculate the full window size (total number of data points in the filter window).
     uint16_t fullWindowSize = 2 * halfWindowSize + 1;
-
-#ifdef OPTIMIZE_GENFACT
-    // Precompute the GenFact numerator and denominator factors for the current parameters.
-    // This step avoids recomputation of these factors during each weight calculation.
-    PrecomputeGenFacts(halfWindowSize, polynomialOrder);
-#endif
 
 #ifdef ENABLE_MEMOIZATION
     // Clear the memoization cache to ensure that previous values do not interfere
@@ -528,8 +525,6 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t
         weights[i] = Weight(i - halfWindowSize, targetPoint, polynomialOrder, &ctx);
     }
 }
-
-
 
 //-------------------------
 // Filter Initialization
