@@ -1,7 +1,7 @@
 # C implementation of Least-Squares Smoothing and Differentiation by the Convolution (Savitzky-Golay) Method
 
 **Author:** Tugbars Heptaskin  
-**Date:** 02/01/2025
+**Date:** 12/03/2025
 
 ## Overview
 This implementation optimizes the traditional Savitzky-Golay filter, utilized for smoothing and differentiating data. Key improvements include global variables to reduce stack footprint and memoization for computational efficiency. 
