@@ -3,7 +3,9 @@
 #include <stdbool.h>
 #include <stdint.h>   // for uint8_t, uint16_t
 #include <time.h>
+#include <cstring>
 #include "savgolFilter.h"
+
 
 /**
  * @brief Utility function to print data points.
@@ -29,7 +31,7 @@ void printData(const MqsRawDataPoint_t data[], size_t dataSize) {
  *
  * @return Exit code.
  */
-int main() {
+int runApplication() {
     double dataset[] = { 11.272, 11.254, 11.465, 11.269, 11.31, 11.388, 11.385, 11.431, 11.333, 11.437,
                          11.431, 11.527, 11.483, 11.449, 11.544, 11.39, 11.469, 11.526, 11.498, 11.522,
                          11.709, 11.503, 11.564, 11.428, 11.714, 11.707, 11.619, 11.751, 11.626, 11.681,
@@ -90,5 +92,11 @@ int main() {
     printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
     printData(filteredData, dataSize);
 
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    printf("Running application...\n");
+    runApplication();
     return 0;
 }
