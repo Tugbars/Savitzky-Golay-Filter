@@ -1,34 +1,62 @@
-# Define the source and include directories
-set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include/iterative)
-
-# List the source files
-set(SOURCES
-    ${SRC_DIR}/savgolFilter.c
+# Define the application executable
+add_executable(savgol_app
+    main.cpp
 )
 
-# List the header files (optional, but good practice for IDEs)
-set(HEADERS
-    ${INCLUDE_DIR}/savgolFilter.h
+# Set include directories for the application
+target_include_directories(savgol_app PRIVATE
+    ${CMAKE_SOURCE_DIR}/include/iterative
 )
 
-# Create a static library
-add_library(savgolFilter STATIC ${SOURCES} ${HEADERS})
-
-# Enable AVX
-if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(savgolFilter PRIVATE -mavx -mfma)
-elseif (CMAKE_C_COMPILER_ID MATCHES "MSVC")
-    target_compile_options(savgolFilter PRIVATE /arch:AVX)
+# Enable AVX for the application (optional)
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(savgol_app PRIVATE -mavx -mfma)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    target_compile_options(savgol_app PRIVATE /arch:AVX)
 endif()
 
-# Set include directories for the library
-target_include_directories(savgolFilter PUBLIC ${INCLUDE_DIR})
+# Link the application to the library
+target_link_libraries(savgol_app
+    savgolFilter
+    gtest_main
+    gmock_main
+)
 
-# Link the math library if needed
-target_link_libraries(savgolFilter PRIVATE m)
-
-# Ensure Cygwin runtime symbols are resolved
+# Ensure Cygwin runtime symbols are resolved for the application
 if (CYGWIN)
-    target_link_libraries(savgolFilter PUBLIC c cygwin)
+    target_link_libraries(savgol_app PRIVATE c cygwin)
 endif()
+
+# Define the test executable
+add_executable(test_savgolFilter
+    test_savgolFilter.cpp
+)
+
+# Set include directories for the test executable
+target_include_directories(test_savgolFilter PRIVATE
+    ${CMAKE_SOURCE_DIR}/include/iterative
+    ${fff_SOURCE_DIR}
+)
+
+# Enable AVX for the test executable (optional)
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_savgolFilter PRIVATE -mavx -mfma)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    target_compile_options(test_savgolFilter PRIVATE /arch:AVX)
+endif()
+
+# Link the test executable to the library and GoogleTest
+target_link_libraries(test_savgolFilter
+    savgolFilter
+    gtest_main
+    gmock_main
+)
+
+# Ensure Cygwin runtime symbols are resolved for the test executable
+if (CYGWIN)
+    target_link_libraries(test_savgolFilter PRIVATE c cygwin)
+endif()
+
+# Register the tests
+include(GoogleTest)
+gtest_discover_tests(test_savgolFilter)
