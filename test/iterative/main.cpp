@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>   // for uint8_t, uint16_t
 #include <time.h>
@@ -14,7 +15,7 @@
  * @param dataSize Number of data points in the array.
  */
 void printData(const MqsRawDataPoint_t data[], size_t dataSize) {
-    printf("%lu yourSavgolData = [", dataSize);
+    printf("%lu yourSavgolData = [", (unsigned long)dataSize);
     for (size_t i = 0; i < dataSize; ++i) {
         printf("%f%s", data[i].phaseAngle, (i == dataSize - 1) ? "" : ", ");
     }
@@ -70,10 +71,15 @@ int main() {
     size_t dataSize = sizeof(dataset) / sizeof(dataset[0]);
     
     // Allocate arrays for the raw and filtered data.
+#ifdef _MSC_VER
+    MqsRawDataPoint_t* rawData = (MqsRawDataPoint_t*)malloc(dataSize*sizeof(MqsRawDataPoint_t));
+    MqsRawDataPoint_t* filteredData = (MqsRawDataPoint_t*)malloc(dataSize*sizeof(MqsRawDataPoint_t));
+#else
     MqsRawDataPoint_t rawData[dataSize];
     MqsRawDataPoint_t filteredData[dataSize];
+#endif
     for (size_t i = 0; i < dataSize; ++i) {
-        rawData[i].phaseAngle = dataset[i];
+        rawData[i].phaseAngle = (float)dataset[i];
         filteredData[i].phaseAngle = 0.0f;
     }
 
@@ -90,5 +96,9 @@ int main() {
     printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
     printData(filteredData, dataSize);
 
+#ifdef _MSC_VER
+    free(rawData);
+    free(filteredData);
+#endif
     return 0;
 }

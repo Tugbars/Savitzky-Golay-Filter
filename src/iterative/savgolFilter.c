@@ -108,7 +108,15 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
 
     // Create a 2D array 'dp' to store intermediate Gram polynomial values.
     // dp[k][d] will store F(k, d): the Gram polynomial of order k and derivative order d.
+#ifdef _MSC_VER
+    // Prevent MSVC error C2057
+    float** dp = (float**)malloc((polynomialOrder + 1)*sizeof(float*));
+    for (int i=0; i < polynomialOrder+1; ++i) {
+      dp[i] = (float*)malloc((derivativeOrder + 1)*sizeof(float));
+    }
+#else
     float dp[polynomialOrder + 1][derivativeOrder + 1];
+#endif
 
     // Base case: k = 0.
     // For the zeroth order, the polynomial is 1 when derivative order is 0, and 0 for d > 0.
@@ -149,7 +157,16 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
     }
 
     // Return the computed Gram polynomial for the requested polynomial order and derivative order.
+#ifdef _MSC_VER
+    float gramPolynomial = dp[polynomialOrder][derivativeOrder];
+    for (int i=0; i < polynomialOrder+1; ++i) {
+      free(dp[i]);
+    }
+    free(dp);
+    return gramPolynomial;
+#else
     return dp[polynomialOrder][derivativeOrder];
+#endif
 }
 
 //-------------------------
@@ -309,7 +326,7 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
  */
 static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t polynomialOrder, uint8_t derivativeOrder, float* weights) {
     // Create a GramPolyContext with the current filter parameters.
-    GramPolyContext ctx = { halfWindowSize, targetPoint, derivativeOrder };
+  GramPolyContext ctx = { halfWindowSize, (uint8_t)targetPoint, derivativeOrder };
 
     // Calculate the full window size (total number of data points in the filter window).
     uint16_t fullWindowSize = 2 * halfWindowSize + 1;
@@ -354,7 +371,7 @@ SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, 
     filter.conf.targetPoint = targetPoint;
     filter.conf.derivativeOrder = derivativeOrder;
     filter.conf.time_step = time_step;
-    filter.dt = pow(time_step, derivativeOrder);
+    filter.dt = (float)pow(time_step, derivativeOrder);
     return filter;
 }
 
@@ -400,7 +417,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     
     // Calculate the total number of points in the filter window.
     int windowSize = 2 * halfWindowSize + 1;
-    int lastIndex = dataSize - 1;
+    int lastIndex = (int)dataSize - 1;
     uint8_t width = halfWindowSize;  // Number of points on either side of the center.
     
     // Declare an array to hold the computed weights for the window.

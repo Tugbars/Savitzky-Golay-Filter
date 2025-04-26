@@ -20,13 +20,16 @@ if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(savgolFilter PRIVATE -mavx -mfma)
 elseif (CMAKE_C_COMPILER_ID MATCHES "MSVC")
     target_compile_options(savgolFilter PRIVATE /arch:AVX)
+    target_link_options(savgolFilter PRIVATE /NODEFAULTLIB:libcmt.lib)
 endif()
 
 # Set include directories for the library
 target_include_directories(savgolFilter PUBLIC ${INCLUDE_DIR})
 
 # Link the math library if needed
-target_link_libraries(savgolFilter PRIVATE m)
+if (NOT CMAKE_C_COMPILER_ID MATCHES "MSVC")
+    target_link_libraries(savgolFilter PRIVATE m)
+endif()
 
 # Ensure Cygwin runtime symbols are resolved
 if (CYGWIN)
