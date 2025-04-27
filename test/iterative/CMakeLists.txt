@@ -13,6 +13,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(savgol_app PRIVATE -mavx -mfma)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     target_compile_options(savgol_app PRIVATE /arch:AVX)
+    target_link_options(savgol_app PRIVATE /NODEFAULTLIB:libcmt.lib)
 endif()
 
 # Link the application to the library
@@ -43,6 +44,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(test_savgolFilter PRIVATE -mavx -mfma)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     target_compile_options(test_savgolFilter PRIVATE /arch:AVX)
+    target_link_options(test_savgolFilter PRIVATE /NODEFAULTLIB:libcmt.lib)
 endif()
 
 # Link the test executable to the library and GoogleTest

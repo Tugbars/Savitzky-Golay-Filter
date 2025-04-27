@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>   // for uint8_t, uint16_t
 #include <time.h>
@@ -14,7 +15,7 @@
  * @param dataSize Number of data points in the array.
  */
 void printData(const MqsRawDataPoint_t data[], size_t dataSize) {
-    printf("%lu yourSavgolData = [", dataSize);
+    printf("%lu yourSavgolData = [", (unsigned long)dataSize);
     for (size_t i = 0; i < dataSize; ++i) {
         printf("%f%s", data[i].phaseAngle, (i == dataSize - 1) ? "" : ", ");
     }
@@ -30,7 +31,7 @@ void printData(const MqsRawDataPoint_t data[], size_t dataSize) {
  * @return Exit code.
  */
 int main() {
-    double dataset[] = { 11.272, 11.254, 11.465, 11.269, 11.31, 11.388, 11.385, 11.431, 11.333, 11.437,
+    FLOAT dataset[]  = { 11.272, 11.254, 11.465, 11.269, 11.31, 11.388, 11.385, 11.431, 11.333, 11.437,
                          11.431, 11.527, 11.483, 11.449, 11.544, 11.39, 11.469, 11.526, 11.498, 11.522,
                          11.709, 11.503, 11.564, 11.428, 11.714, 11.707, 11.619, 11.751, 11.626, 11.681,
                          11.838, 11.658, 11.859, 11.916, 11.814, 11.833, 12.046, 11.966, 12.031, 12.079,
@@ -70,11 +71,16 @@ int main() {
     size_t dataSize = sizeof(dataset) / sizeof(dataset[0]);
     
     // Allocate arrays for the raw and filtered data.
+#ifdef _MSC_VER
+    MqsRawDataPoint_t* rawData = (MqsRawDataPoint_t*)malloc(dataSize*sizeof(MqsRawDataPoint_t));
+    MqsRawDataPoint_t* filteredData = (MqsRawDataPoint_t*)malloc(dataSize*sizeof(MqsRawDataPoint_t));
+#else
     MqsRawDataPoint_t rawData[dataSize];
     MqsRawDataPoint_t filteredData[dataSize];
+#endif
     for (size_t i = 0; i < dataSize; ++i) {
         rawData[i].phaseAngle = dataset[i];
-        filteredData[i].phaseAngle = 0.0f;
+        filteredData[i].phaseAngle = ZERO;
     }
 
     // Set filter parameters.
@@ -87,8 +93,12 @@ int main() {
     mes_savgolFilter(rawData, dataSize, halfWindowSize, filteredData, polynomialOrder, targetPoint, derivativeOrder);
     clock_t toc = clock();
 
-    printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
+    printf("Elapsed: %f seconds\n", (FLOAT)(toc - tic) / CLOCKS_PER_SEC);
     printData(filteredData, dataSize);
 
+#ifdef _MSC_VER
+    free(rawData);
+    free(filteredData);
+#endif
     return 0;
 }

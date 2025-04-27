@@ -34,8 +34,32 @@
 /// Define to use the optimized version of GenFact (precomputed values)
 #define OPTIMIZE_GENFACT
 
+// Uncomment the following line to enable memoization of Gram polynomial calculations.
+#define ENABLE_MEMOIZATION
+
 /// Uncomment the following line to build with a test main
 //#define TEST_MAIN
+
+/// Data type precision statements
+#ifdef FLOAT_DOUBLE		// double
+#define ZERO	0.0
+#define ONE	1.0
+#define TWO	2.0
+#define FOUR	4.0
+#define FLOAT	double
+#elif  FLOAT_LONG_DOUBLE	// long double
+#define ZERO	0.0l
+#define ONE	1.0l
+#define TWO	2.0l
+#define FOUR	4.0l
+#define FLOAT	long double
+#else				// default - float
+#define ZERO	0.0f
+#define ONE	1.0f
+#define TWO	2.0f
+#define FOUR	4.0f
+#define FLOAT	float
+#endif
 
 //-------------------------
 // Data Type Definitions
@@ -47,7 +71,7 @@
  * Represents a single measurement with a phase angle.
  */
 typedef struct {
-    float phaseAngle;
+    FLOAT phaseAngle;
 } MqsRawDataPoint_t;
 
 /**
@@ -61,7 +85,7 @@ typedef struct {
     uint8_t polynomialOrder;  /**< Order of the polynomial used for fitting */
     uint8_t targetPoint;      /**< Target point within the window (usually center) */
     uint8_t derivativeOrder;  /**< Order of the derivative to compute (0 for smoothing) */
-    float time_step;          /**< Time step used in the filter */
+    FLOAT time_step;          /**< Time step used in the filter */
 } SavitzkyGolayFilterConfig;
 
 /**
@@ -71,7 +95,7 @@ typedef struct {
  */
 typedef struct {
     SavitzkyGolayFilterConfig conf; /**< Filter configuration parameters */
-    float dt;                       /**< Scaling factor computed as (time_step)^derivativeOrder */
+    FLOAT dt;                       /**< Scaling factor computed as (time_step)^derivativeOrder */
 } SavitzkyGolayFilter;
 
 /**
@@ -125,7 +149,7 @@ int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWind
  * @return A SavitzkyGolayFilter structure with initialized values.
  */
 SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint,
-                               uint8_t derivativeOrder, float time_step);
+                               uint8_t derivativeOrder, FLOAT time_step);
 
 #ifdef __cplusplus
 }
