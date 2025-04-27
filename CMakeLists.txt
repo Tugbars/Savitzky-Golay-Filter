@@ -10,6 +10,13 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Setup GNU-alike installatin directories
+include (GNUInstallDirs)
+set(INSTALL_LIBDIR
+  ${CMAKE_INSTALL_LIBDIR} CACHE PATH "Installation directory for libraries")
+set(INSTALL_INCLUDEDIR
+  ${CMAKE_INSTALL_INCLUDEDIR} CACHE PATH "Installation directory for header files")
+
 # Ensure Cygwin runtime linkage for all targets
 if (CYGWIN)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lc -lcygwin")

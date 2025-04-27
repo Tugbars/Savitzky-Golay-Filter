@@ -35,3 +35,11 @@ endif()
 if (CYGWIN)
     target_link_libraries(savgolFilter PUBLIC c cygwin)
 endif()
+
+# Install
+install(TARGETS savgolFilter
+  LIBRARY DESTINATION ${INSTALL_LIBDIR} COMPONENT lib
+)
+install(
+  FILES ${HEADERS} DESTINATION ${INSTALL_INCLUDEDIR}
+)
