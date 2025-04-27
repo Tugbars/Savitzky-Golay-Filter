@@ -31,7 +31,7 @@ void printData(const MqsRawDataPoint_t data[], size_t dataSize) {
  * @return Exit code.
  */
 int main() {
-    double dataset[] = { 11.272, 11.254, 11.465, 11.269, 11.31, 11.388, 11.385, 11.431, 11.333, 11.437,
+    FLOAT dataset[]  = { 11.272, 11.254, 11.465, 11.269, 11.31, 11.388, 11.385, 11.431, 11.333, 11.437,
                          11.431, 11.527, 11.483, 11.449, 11.544, 11.39, 11.469, 11.526, 11.498, 11.522,
                          11.709, 11.503, 11.564, 11.428, 11.714, 11.707, 11.619, 11.751, 11.626, 11.681,
                          11.838, 11.658, 11.859, 11.916, 11.814, 11.833, 12.046, 11.966, 12.031, 12.079,
@@ -79,8 +79,8 @@ int main() {
     MqsRawDataPoint_t filteredData[dataSize];
 #endif
     for (size_t i = 0; i < dataSize; ++i) {
-        rawData[i].phaseAngle = (float)dataset[i];
-        filteredData[i].phaseAngle = 0.0f;
+        rawData[i].phaseAngle = dataset[i];
+        filteredData[i].phaseAngle = ZERO;
     }
 
     // Set filter parameters.
@@ -93,7 +93,7 @@ int main() {
     mes_savgolFilter(rawData, dataSize, halfWindowSize, filteredData, polynomialOrder, targetPoint, derivativeOrder);
     clock_t toc = clock();
 
-    printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
+    printf("Elapsed: %f seconds\n", (FLOAT)(toc - tic) / CLOCKS_PER_SEC);
     printData(filteredData, dataSize);
 
 #ifdef _MSC_VER

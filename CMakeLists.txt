@@ -24,6 +24,12 @@ if (CYGWIN)
     set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} -lc -lcygwin")
 endif()
 
+# Add optional definitions from cmake command line
+if(DEFINED DEFS)
+  add_compile_definitions(${DEFS})
+  message(STATUS "Adding definition(s): ${DEFS}")
+endif()
+
 # Fetch GoogleTest
 include(FetchContent)
 FetchContent_Declare(

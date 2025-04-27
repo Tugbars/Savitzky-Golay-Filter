@@ -34,13 +34,10 @@
 /// Maximum supported polynomial order for optimized GenFact precomputation.
 #define MAX_POLY_ORDER 4
 /// Precomputed numerator factors for GenFact.
-static float precomputedGenFactNum[MAX_POLY_ORDER + 1];
+static FLOAT precomputedGenFactNum[MAX_POLY_ORDER + 1];
 /// Precomputed denominator factors for GenFact.
-static float precomputedGenFactDen[MAX_POLY_ORDER + 1];
+static FLOAT precomputedGenFactDen[MAX_POLY_ORDER + 1];
 #endif
-
-// Uncomment the following line to enable memoization of Gram polynomial calculations.
-#define ENABLE_MEMOIZATION
 
 //-------------------------
 // Optimized GenFact Precomputation
@@ -58,13 +55,13 @@ static float precomputedGenFactDen[MAX_POLY_ORDER + 1];
 static void PrecomputeGenFacts(uint8_t halfWindowSize, uint8_t polynomialOrder) {
     uint32_t upperLimitNum = 2 * halfWindowSize;
     for (uint8_t k = 0; k <= polynomialOrder; ++k) {
-        float numProduct = 1.0f;
+        FLOAT numProduct = ONE;
         for (uint8_t j = (upperLimitNum - k) + 1; j <= upperLimitNum; j++) {
             numProduct *= j;
         }
         precomputedGenFactNum[k] = numProduct;
         uint32_t upperLimitDen = 2 * halfWindowSize + k + 1;
-        float denProduct = 1.0f;
+        FLOAT denProduct = ONE;
         for (uint8_t j = (upperLimitDen - (k + 1)) + 1; j <= upperLimitDen; j++) {
             denProduct *= j;
         }
@@ -77,10 +74,10 @@ static void PrecomputeGenFacts(uint8_t halfWindowSize, uint8_t polynomialOrder) 
  *
  * @param upperLimit The upper limit of the product.
  * @param termCount The number of terms in the product.
- * @return The computed generalized factorial as a float.
+ * @return The computed generalized factorial as a FLOAT.
  */
-static inline float GenFact(uint8_t upperLimit, uint8_t termCount) {
-    float product = 1.0f;
+static inline FLOAT GenFact(uint8_t upperLimit, uint8_t termCount) {
+    FLOAT product = ONE;
     for (uint8_t j = (upperLimit - termCount) + 1; j <= upperLimit; j++) {
         product *= j;
     }
@@ -101,7 +98,7 @@ static inline float GenFact(uint8_t upperLimit, uint8_t termCount) {
  * @param ctx Pointer to a GramPolyContext containing filter parameters.
  * @return The computed Gram polynomial value.
  */
-static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const GramPolyContext* ctx) {
+static FLOAT GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const GramPolyContext* ctx) {
     // Retrieve necessary parameters from the context.
     uint8_t halfWindowSize = ctx->halfWindowSize;    // Half window size used in the filter.
     uint8_t derivativeOrder = ctx->derivativeOrder;    // Order of the derivative to compute.
@@ -110,18 +107,18 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
     // dp[k][d] will store F(k, d): the Gram polynomial of order k and derivative order d.
 #ifdef _MSC_VER
     // Prevent MSVC error C2057
-    float** dp = (float**)malloc((polynomialOrder + 1)*sizeof(float*));
+    FLOAT** dp = (FLOAT**)malloc((polynomialOrder + 1)*sizeof(FLOAT*));
     for (int i=0; i < polynomialOrder+1; ++i) {
-      dp[i] = (float*)malloc((derivativeOrder + 1)*sizeof(float));
+      dp[i] = (FLOAT*)malloc((derivativeOrder + 1)*sizeof(FLOAT));
     }
 #else
-    float dp[polynomialOrder + 1][derivativeOrder + 1];
+    FLOAT dp[polynomialOrder + 1][derivativeOrder + 1];
 #endif
 
     // Base case: k = 0.
     // For the zeroth order, the polynomial is 1 when derivative order is 0, and 0 for d > 0.
     for (uint8_t d = 0; d <= derivativeOrder; d++) {
-        dp[0][d] = (d == 0) ? 1.0f : 0.0f;
+        dp[0][d] = (d == 0) ? ONE : ZERO;
     }
     // If the requested polynomial order is 0, return the base case directly.
     if (polynomialOrder == 0) {
@@ -131,7 +128,7 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
     // k = 1: Compute first order polynomial values using the base case.
     for (uint8_t d = 0; d <= derivativeOrder; d++) {
         // The formula for F(1, d) uses the base value F(0, d) and, if needed, the derivative of F(0, d-1).
-        dp[1][d] = (1.0f / halfWindowSize) * (dataIndex * dp[0][d] + (d > 0 ? d * dp[0][d - 1] : 0));
+        dp[1][d] = (ONE / halfWindowSize) * (dataIndex * dp[0][d] + (d > 0 ? d * dp[0][d - 1] : 0));
     }
 
     // Iteratively compute F(k, d) for k >= 2.
@@ -140,13 +137,13 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
         // Compute constants 'a' and 'c' for the recurrence:
         // a = (4k - 2) / [k * (2*halfWindowSize - k + 1)]
         // c = [(k - 1) * (2*halfWindowSize + k)] / [k * (2*halfWindowSize - k + 1)]
-        float a = (4.0f * k - 2.0f) / (k * (2.0f * halfWindowSize - k + 1.0f));
-        float c = ((k - 1.0f) * (2.0f * halfWindowSize + k)) / (k * (2.0f * halfWindowSize - k + 1.0f));
+        FLOAT a = (FOUR * k - TWO) / (k * (TWO * halfWindowSize - k + ONE));
+        FLOAT c = ((k - ONE) * (TWO * halfWindowSize + k)) / (k * (TWO * halfWindowSize - k + ONE));
 
         // For each derivative order from 0 up to derivativeOrder:
         for (uint8_t d = 0; d <= derivativeOrder; d++) {
             // Start with term = dataIndex * F(k-1, d)
-            float term = dataIndex * dp[k - 1][d];
+            FLOAT term = dataIndex * dp[k - 1][d];
             // If computing a derivative (d > 0), add the derivative term: d * F(k-1, d-1)
             if (d > 0) {
                 term += d * dp[k - 1][d - 1];
@@ -158,7 +155,7 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
 
     // Return the computed Gram polynomial for the requested polynomial order and derivative order.
 #ifdef _MSC_VER
-    float gramPolynomial = dp[polynomialOrder][derivativeOrder];
+    FLOAT gramPolynomial = dp[polynomialOrder][derivativeOrder];
     for (int i=0; i < polynomialOrder+1; ++i) {
       free(dp[i]);
     }
@@ -179,7 +176,7 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
  */
 typedef struct {
     bool isComputed;
-    float value;
+    FLOAT value;
 } GramPolyCacheEntry;
 
 // Define maximum cache dimensions (adjust as needed).
@@ -224,7 +221,7 @@ static void ClearGramPolyCache(uint8_t halfWindowSize, uint8_t polynomialOrder, 
  * @param ctx Pointer to a GramPolyContext containing filter parameters.
  * @return The computed Gram polynomial value.
  */
-static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const GramPolyContext* ctx) {
+static FLOAT MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const GramPolyContext* ctx) {
     // Shift dataIndex to a nonnegative index for cache lookup.
     int shiftedIndex = dataIndex + ctx->halfWindowSize;
     
@@ -247,7 +244,7 @@ static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const Gram
     }
     
     // Compute the Gram polynomial using the iterative method.
-    float value = GramPolyIterative(polynomialOrder, dataIndex, ctx);
+    FLOAT value = GramPolyIterative(polynomialOrder, dataIndex, ctx);
     
     // Store the computed value in the cache and mark it as computed.
     gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].value = value;
@@ -280,27 +277,27 @@ static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const Gram
  * @param ctx Pointer to a GramPolyContext containing filter parameters.
  * @return The computed weight for the data index.
  */
-static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, const GramPolyContext* ctx) {
-    float w = 0.0f;  // Initialize weight accumulator.
+static FLOAT Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, const GramPolyContext* ctx) {
+    FLOAT w = ZERO;  // Initialize weight accumulator.
     
     // Loop over polynomial orders from 0 to polynomialOrder.
     for (uint8_t k = 0; k <= polynomialOrder; ++k) {
 #ifdef ENABLE_MEMOIZATION
         // If memoization is enabled, use the cached version.
-        float part1 = MemoizedGramPoly(k, dataIndex, ctx);   // Evaluate at data point (derivative order = 0)
-        float part2 = MemoizedGramPoly(k, targetPoint, ctx);   // Evaluate at target point (with derivative order from ctx)
+        FLOAT part1 = MemoizedGramPoly(k, dataIndex, ctx);   // Evaluate at data point (derivative order = 0)
+        FLOAT part2 = MemoizedGramPoly(k, targetPoint, ctx);   // Evaluate at target point (with derivative order from ctx)
 #else
         // Otherwise, compute the Gram polynomial iteratively without caching.
-        float part1 = GramPolyIterative(k, dataIndex, ctx);
-        float part2 = GramPolyIterative(k, targetPoint, ctx);
+        FLOAT part1 = GramPolyIterative(k, dataIndex, ctx);
+        FLOAT part2 = GramPolyIterative(k, targetPoint, ctx);
 #endif
 
 #ifdef OPTIMIZE_GENFACT
         // If optimized GenFact is enabled, use precomputed numerator/denominator.
-        float factor = (2 * k + 1) * (precomputedGenFactNum[k] / precomputedGenFactDen[k]);
+        FLOAT factor = (2 * k + 1) * (precomputedGenFactNum[k] / precomputedGenFactDen[k]);
 #else
         // Otherwise, compute the generalized factorial ratio on the fly.
-        float factor = (2 * k + 1) * (GenFact(2 * ctx->halfWindowSize, k) /
+        FLOAT factor = (2 * k + 1) * (GenFact(2 * ctx->halfWindowSize, k) /
                                       GenFact(2 * ctx->halfWindowSize + k + 1, k + 1));
 #endif
 
@@ -324,7 +321,7 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
  * @param derivativeOrder Derivative order for the filter.
  * @param weights Array (size: 2*halfWindowSize+1) to store computed weights.
  */
-static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t polynomialOrder, uint8_t derivativeOrder, float* weights) {
+static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t polynomialOrder, uint8_t derivativeOrder, FLOAT* weights) {
     // Create a GramPolyContext with the current filter parameters.
   GramPolyContext ctx = { halfWindowSize, (uint8_t)targetPoint, derivativeOrder };
 
@@ -364,14 +361,14 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t
  * @param time_step Time step value.
  * @return An initialized SavitzkyGolayFilter structure.
  */
-SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint, uint8_t derivativeOrder, float time_step) {
+SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint, uint8_t derivativeOrder, FLOAT time_step) {
     SavitzkyGolayFilter filter;
     filter.conf.halfWindowSize = halfWindowSize;
     filter.conf.polynomialOrder = polynomialOrder;
     filter.conf.targetPoint = targetPoint;
     filter.conf.derivativeOrder = derivativeOrder;
     filter.conf.time_step = time_step;
-    filter.dt = (float)pow(time_step, derivativeOrder);
+    filter.dt = (FLOAT)pow(time_step, derivativeOrder);
     return filter;
 }
 
@@ -421,7 +418,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     uint8_t width = halfWindowSize;  // Number of points on either side of the center.
     
     // Declare an array to hold the computed weights for the window.
-    static float weights[MAX_WINDOW];
+    static FLOAT weights[MAX_WINDOW];
 
     // Step 1: Compute weights for the central window.
     // The weights are computed based on the filter's polynomial and derivative orders.
@@ -431,7 +428,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     // For each valid window position, multiply each data point by its corresponding weight
     // and sum the results.
     for (int i = 0; i <= (int)dataSize - windowSize; ++i) {
-        float sum = 0.0f;
+        FLOAT sum = ZERO;
         for (int j = 0; j < windowSize; ++j) {
             sum += weights[j] * data[i + j].phaseAngle;
         }
@@ -447,7 +444,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
         // For the leading edge, re-compute the weights for a window with a target
         // shifted towards the beginning (i.e., mirror the data).
         ComputeWeights(halfWindowSize, width - i, filter.conf.polynomialOrder, filter.conf.derivativeOrder, weights);
-        float leadingSum = 0.0f;
+        FLOAT leadingSum = ZERO;
         // Apply the weights to the mirrored segment of the data.
         for (int j = 0; j < windowSize; ++j) {
             leadingSum += weights[j] * data[windowSize - j - 1].phaseAngle;
@@ -456,7 +453,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
 
         // --- Trailing Edge ---
         // For the trailing edge, mirror padding is similarly applied.
-        float trailingSum = 0.0f;
+        FLOAT trailingSum = ZERO;
         for (int j = 0; j < windowSize; ++j) {
             trailingSum += weights[j] * data[lastIndex - windowSize + j + 1].phaseAngle;
         }
@@ -506,7 +503,7 @@ int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWind
         return -2;
     }
     
-    SavitzkyGolayFilter filter = initFilter(halfWindowSize, polynomialOrder, targetPoint, derivativeOrder, 1.0f);
+    SavitzkyGolayFilter filter = initFilter(halfWindowSize, polynomialOrder, targetPoint, derivativeOrder, ONE);
     ApplyFilter(data, dataSize, halfWindowSize, targetPoint, filter, filteredData);
     
     return 0;
