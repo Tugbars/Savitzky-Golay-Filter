@@ -5,6 +5,7 @@
 #include <time.h>
 #include <cstring>
 #include "savgolFilter.h"
+#include <direct.h>
 
 
 /**
@@ -15,12 +16,19 @@
  * @param data Array of data points.
  * @param dataSize Number of data points in the array.
  */
-void printData(const MqsRawDataPoint_t data[], size_t dataSize) {
-    printf("%lu yourSavgolData = [", dataSize);
-    for (size_t i = 0; i < dataSize; ++i) {
-        printf("%f%s", data[i].phaseAngle, (i == dataSize - 1) ? "" : ", ");
+void printDataToFile(const MqsRawDataPoint_t data[], size_t dataSize, const char* filename) {
+    FILE* fp = fopen(filename, "w");
+    if (!fp) {
+        perror("Failed to open output file");
+        return;
     }
-    printf("];\n");
+
+    fprintf(fp, "%lu yourSavgolData = [", dataSize);
+    for (size_t i = 0; i < dataSize; ++i) {
+        fprintf(fp, "%f%s", data[i].phaseAngle, (i == dataSize - 1) ? "" : ", ");
+    }
+    fprintf(fp, "];\n");
+    fclose(fp);
 }
 
 /**
@@ -79,6 +87,10 @@ int runApplication() {
         filteredData[i].phaseAngle = 0.0f;
     }
 
+    char cwd[1024];
+    _getcwd(cwd, sizeof(cwd));
+    printf("Working directory: %s\n", cwd);
+
     // Set filter parameters.
     uint8_t halfWindowSize = 12;
     uint8_t polynomialOrder = 4;
@@ -90,7 +102,8 @@ int runApplication() {
     clock_t toc = clock();
 
     printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
-    printData(filteredData, dataSize);
+    printDataToFile(filteredData, dataSize, "filtered_output.m");
+    
 
     return 0;
 }

@@ -82,9 +82,9 @@ typedef struct {
  * Encapsulates all mutable state to ensure thread-safety and reentrancy.
  */
 typedef struct {
-    ALIGNED float weights[MAX_WINDOW];              // Convolution weights for edge cases
-    ALIGNED float centralWeights[MAX_WINDOW];       // Precomputed weights for central region
-    ALIGNED float tempWindow[MAX_WINDOW];           // Buffer for mirror-padding
+    float centralWeights[MAX_WINDOW] __attribute__((aligned(32)));
+    float weights[MAX_WINDOW]        __attribute__((aligned(32)));
+    float tempWindow[MAX_WINDOW]     __attribute__((aligned(32)));
     bool weightsValid;                             // Flag for weights validity
     uint8_t lastHalfWindowSize;                    // Last half-window size for change detection
     uint8_t lastPolyOrder;                         // Last polynomial order
