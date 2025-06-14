@@ -24,6 +24,17 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+// Define ALIGNED macro for alignment (32 bytes for AVX)
+#if defined(_MSC_VER) // Microsoft Visual C++
+#include <stdalign.h>
+#define ALIGNED alignas(32)
+#elif defined(__GNUC__) || defined(__clang__) // GCC or Clang
+#define ALIGNED __attribute__((aligned(32)))
+#else
+#warning "ALIGNED macro not defined for this compiler. Alignment may not be guaranteed."
+#define ALIGNED
+#endif
+
 //-------------------------
 // Constant Definitions
 //-------------------------
@@ -64,16 +75,34 @@ typedef struct {
     float time_step;          /**< Time step used in the filter */
 } SavitzkyGolayFilterConfig;
 
+
+/**
+ * @brief Per-instance state for the Savitzky–Golay filter.
+ *
+ * Encapsulates all mutable state to ensure thread-safety and reentrancy.
+ */
+typedef struct {
+    ALIGNED float weights[MAX_WINDOW];              // Convolution weights for edge cases
+    ALIGNED float centralWeights[MAX_WINDOW];       // Precomputed weights for central region
+    ALIGNED float tempWindow[MAX_WINDOW];           // Buffer for mirror-padding
+    bool weightsValid;                             // Flag for weights validity
+    uint8_t lastHalfWindowSize;                    // Last half-window size for change detection
+    uint8_t lastPolyOrder;                         // Last polynomial order
+    uint8_t lastDerivOrder;                        // Last derivative order
+    uint16_t lastTargetPoint;                      // Last target point
+} SavGolState;
+
+
 /**
  * @brief Savitzky–Golay filter context.
  *
- * Contains the filter configuration and a scaling factor (dt) computed based on the derivative order.
+ * Contains the filter configuration, a scaling factor (dt), and per-instance state.
  */
 typedef struct {
     SavitzkyGolayFilterConfig conf; /**< Filter configuration parameters */
     float dt;                       /**< Scaling factor computed as (time_step)^derivativeOrder */
+    SavGolState state;              // Per-instance mutable state
 } SavitzkyGolayFilter;
-
 /**
  * @brief Context for iterative Gram polynomial evaluation.
  *
@@ -85,6 +114,7 @@ typedef struct {
     uint8_t targetPoint;     /**< Target point (index offset) in the window */
     uint8_t derivativeOrder; /**< Order of the derivative */
 } GramPolyContext;
+
 
 //-------------------------
 // Function Declarations
@@ -107,25 +137,26 @@ extern "C" {
  * @param polynomialOrder Order of the polynomial used for fitting.
  * @param targetPoint  The target point in the filter window.
  * @param derivativeOrder Order of the derivative (0 for smoothing).
+ * @return Pointer to the initialized filter instance (must be freed by the caller).
  */
-int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+SavitzkyGolayFilter* mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
     MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
     uint8_t targetPoint, uint8_t derivativeOrder);
 
 /**
  * @brief Initializes a Savitzky–Golay filter instance.
  *
- * Sets the configuration parameters and computes the scaling factor based on the derivative order.
+ * Allocates and sets the configuration parameters and computes the scaling factor based on the derivative order.
  *
  * @param halfWindowSize Half-window size.
  * @param polynomialOrder Polynomial order.
  * @param targetPoint Target point within the window.
  * @param derivativeOrder Derivative order.
  * @param time_step Time step value.
- * @return A SavitzkyGolayFilter structure with initialized values.
+ * @return Pointer to the initialized SavitzkyGolayFilter instance (must be freed by the caller).
  */
-SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint,
-                               uint8_t derivativeOrder, float time_step);
+SavitzkyGolayFilter* initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint,
+                              uint8_t derivativeOrder, float time_step);
 
 #ifdef __cplusplus
 }

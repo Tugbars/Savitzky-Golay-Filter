@@ -1,0 +1,3 @@
+"C:\Program Files\CMake\bin\cmake.exe" -E rm -f CMakeFiles\savgol_app.dir/objects.a
+C:\ProgramData\mingw64\mingw64\bin\ar.exe qc CMakeFiles\savgol_app.dir/objects.a @CMakeFiles\savgol_app.dir\objects1.rsp
+C:\ProgramData\mingw64\mingw64\bin\g++.exe -g -Wl,--whole-archive CMakeFiles\savgol_app.dir/objects.a -Wl,--no-whole-archive -o savgol_app.exe -Wl,--out-implib,libsavgol_app.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\savgol_app.dir\linkLibs.rsp

@@ -1,0 +1,2 @@
+C:\ProgramData\mingw64\mingw64\bin\ar.exe qc libsavgolFilter.a CMakeFiles/savgolFilter.dir/savgolFilter.c.obj
+C:\ProgramData\mingw64\mingw64\bin\ranlib.exe libsavgolFilter.a

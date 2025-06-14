@@ -1,0 +1,5 @@
+if(EXISTS "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative/test_savgolFilter[1]_tests.cmake")
+  include("C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative/test_savgolFilter[1]_tests.cmake")
+else()
+  add_test(test_savgolFilter_NOT_BUILT test_savgolFilter_NOT_BUILT)
+endif()

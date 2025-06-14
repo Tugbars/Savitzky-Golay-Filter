@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/CMakeFiles/fff-populate"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/CMakeFiles/fff-populate.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/CMakeFiles/fff-populate-complete.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/fff-populate-prefix/src/fff-populate-stamp/fff-populate-build.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/fff-populate-prefix/src/fff-populate-stamp/fff-populate-configure.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/fff-populate-prefix/src/fff-populate-stamp/fff-populate-download.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/fff-populate-prefix/src/fff-populate-stamp/fff-populate-install.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/fff-populate-prefix/src/fff-populate-stamp/fff-populate-mkdir.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/fff-populate-prefix/src/fff-populate-stamp/fff-populate-patch.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/fff-populate-prefix/src/fff-populate-stamp/fff-populate-test.rule"
+		},
+		{
+			"file" : "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/fff-populate-prefix/src/fff-populate-stamp/fff-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"fff-populate"
+		],
+		"name" : "fff-populate"
+	}
+}

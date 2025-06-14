@@ -460,54 +460,70 @@
   * @param derivativeOrder Derivative order for the filter.
   * @param weights Array (size: 2*halfWindowSize+1) to store computed weights.
   */
- static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t polynomialOrder, uint8_t derivativeOrder, float* weights) {
-     // Create a GramPolyContext with the current filter parameters.
-     GramPolyContext ctx = { halfWindowSize, targetPoint, derivativeOrder };
- 
-     static uint8_t lastHalfWindowSize = 0, lastPolyOrder = 0, lastDerivOrder = 0;
-     static uint16_t lastTargetPoint = 0;
- 
-     // Calculate the full window size (total number of data points in the filter window).
-     uint16_t fullWindowSize = 2 * halfWindowSize + 1;
- 
- // Memoization: Only clear cache if parameters have changed
- #ifdef ENABLE_MEMOIZATION
-     // Clear the memoization cache to ensure that previous values do not interfere
-     // with the current computation. This is necessary when filter parameters change.
-     if (halfWindowSize != lastHalfWindowSize || polynomialOrder != lastPolyOrder || 
-         derivativeOrder != lastDerivOrder || targetPoint != lastTargetPoint) {
-         ClearGramPolyCache(halfWindowSize, polynomialOrder, derivativeOrder);
-         lastHalfWindowSize = halfWindowSize;
-         lastPolyOrder = polynomialOrder;
-         lastDerivOrder = derivativeOrder;
-         lastTargetPoint = targetPoint;
-     }
- #endif
- 
-     // Loop over each index in the filter window using AVX for batches of 8 elements.
-     int i;
-     for (i = 0; i <= fullWindowSize - 8; i += 8) {
-         // Prepare an array of 8 shifted data indices for vectorized weight computation.
-         // Shift each index so that the center of the window corresponds to 0, making
-         // the weight calculation symmetric around the center.
-         int dataIndices[8] = {
-             i - halfWindowSize, i + 1 - halfWindowSize, i + 2 - halfWindowSize, i + 3 - halfWindowSize,
-             i + 4 - halfWindowSize, i + 5 - halfWindowSize, i + 6 - halfWindowSize, i + 7 - halfWindowSize
-         };
-         __m256 w; // 256-bit vector to store 8 weights.
-         // Compute 8 weights simultaneously using a vectorized version of the Weight function.
-         WeightVectorized(dataIndices, targetPoint, polynomialOrder, &ctx, &w);
-         // Store the 8 computed weights into the weights array.
-         _mm256_store_ps(&weights[i], w);
-     }
- 
-     // Scalar remainder: Handle any leftover indices not processed by AVX.
-     for (; i < fullWindowSize; ++i) {
-         // Shift the dataIndex so that the center of the window corresponds to 0.
-         // This makes the weight calculation symmetric around the center.
-         weights[i] = Weight(i - halfWindowSize, targetPoint, polynomialOrder, &ctx);
-     }
- }
+static void ComputeWeights(SavitzkyGolayFilter* filter) {
+    uint8_t halfWindowSize = filter->conf.halfWindowSize;
+    uint16_t targetPoint = filter->conf.targetPoint;
+    uint8_t polynomialOrder = filter->conf.polynomialOrder;
+    uint8_t derivativeOrder = filter->conf.derivativeOrder;
+    SavGolState* state = &filter->state;
+
+    printf("ComputeWeights: halfWindowSize=%d, targetPoint=%d, polynomialOrder=%d, derivativeOrder=%d\n", 
+           halfWindowSize, targetPoint, polynomialOrder, derivativeOrder);
+    fflush(stdout);
+
+    GramPolyContext ctx = {halfWindowSize, targetPoint, derivativeOrder};
+    uint16_t fullWindowSize = 2 * halfWindowSize + 1;
+    printf("fullWindowSize calculated: %d\n", fullWindowSize);
+
+    if (state->weightsValid &&
+        halfWindowSize == state->lastHalfWindowSize &&
+        polynomialOrder == state->lastPolyOrder &&
+        derivativeOrder == state->lastDerivOrder &&
+        targetPoint == state->lastTargetPoint) {
+        printf("Weights valid, skipping recomputation\n");
+        return;
+    }
+
+    printf("Proceeding with weight computation\n");
+    fflush(stdout);
+#ifdef ENABLE_MEMOIZATION
+    if (!state->weightsValid ||
+        halfWindowSize != state->lastHalfWindowSize ||
+        polynomialOrder != state->lastPolyOrder ||
+        derivativeOrder != state->lastDerivOrder ||
+        targetPoint != state->lastTargetPoint) {
+        printf("Clearing memoization cache\n");
+        ClearGramPolyCache(halfWindowSize, polynomialOrder, derivativeOrder);
+        state->lastHalfWindowSize = halfWindowSize;
+        state->lastPolyOrder = polynomialOrder;
+        state->lastDerivOrder = derivativeOrder;
+        state->lastTargetPoint = targetPoint;
+    }
+#endif
+
+    int i;
+    printf("Entering AVX loop with fullWindowSize=%d, condition: i <= %d\n", fullWindowSize, fullWindowSize - 8);
+    for (i = 0; i <= fullWindowSize - 8; i += 8) {
+        int dataIndices[8] = {
+            i - halfWindowSize, i + 1 - halfWindowSize, i + 2 - halfWindowSize, i + 3 - halfWindowSize,
+            i + 4 - halfWindowSize, i + 5 - halfWindowSize, i + 6 - halfWindowSize, i + 7 - halfWindowSize
+        };
+        __m256 w;
+        //WeightVectorized(dataIndices, targetPoint, polynomialOrder, &ctx, &w);
+        _mm256_store_ps(&state->centralWeights[i], w);
+        printf("Stored weights for index %d: ", i);
+        for (int j = 0; j < 8; j++) printf("%.4f ", state->centralWeights[i + j]);
+        printf("\n");
+    }
+
+    printf("Entering scalar loop from index %d to %d\n", i, fullWindowSize - 1);
+    for (; i < fullWindowSize; ++i) {
+        state->centralWeights[i] = Weight(i - halfWindowSize, targetPoint, polynomialOrder, &ctx);
+        printf("Stored weight for index %d: %.4f\n", i, state->centralWeights[i]);
+    }
+
+    state->weightsValid = true;
+}
  
  //-------------------------
  // Filter Initialization
@@ -522,16 +538,22 @@
   * @param time_step Time step value.
   * @return An initialized SavitzkyGolayFilter structure.
   */
- SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint, uint8_t derivativeOrder, float time_step) {
-     SavitzkyGolayFilter filter;
-     filter.conf.halfWindowSize = halfWindowSize;
-     filter.conf.polynomialOrder = polynomialOrder;
-     filter.conf.targetPoint = targetPoint;
-     filter.conf.derivativeOrder = derivativeOrder;
-     filter.conf.time_step = time_step;
-     filter.dt = pow(time_step, derivativeOrder);
-     return filter;
- }
+SavitzkyGolayFilter* initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint, uint8_t derivativeOrder, float time_step) {
+    SavitzkyGolayFilter* filter = (SavitzkyGolayFilter*)malloc(sizeof(SavitzkyGolayFilter));
+    if (filter == NULL) {
+        LOG_ERROR("Failed to allocate memory for SavitzkyGolayFilter.");
+        return NULL;
+    }
+    // Zero-initialize to ensure all state fields (e.g., weightsValid) are set
+    memset(filter, 0, sizeof(SavitzkyGolayFilter));
+    filter->conf.halfWindowSize = halfWindowSize;
+    filter->conf.polynomialOrder = polynomialOrder;
+    filter->conf.targetPoint = targetPoint;
+    filter->conf.derivativeOrder = derivativeOrder;
+    filter->conf.time_step = time_step;
+    filter->dt = pow(time_step, derivativeOrder);
+    return filter;
+}
  
  //-------------------------
  // Filter Application
@@ -565,7 +587,7 @@
   * @param filter The SavitzkyGolayFilter structure containing configuration parameters.
   * @param filteredData Array to store the filtered data points.
   */
- static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize, uint16_t targetPoint, SavitzkyGolayFilter filter, MqsRawDataPoint_t filteredData[]) {
+static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize, uint16_t targetPoint, SavitzkyGolayFilter* filter, MqsRawDataPoint_t filteredData[]) {
      // Validate and adjust halfWindowSize to ensure it doesn't exceed the maximum allowed window size.
      // Decision: Cap halfWindowSize to prevent buffer overflows in weights arrays.
      uint8_t maxHalfWindowSize = (MAX_WINDOW - 1) / 2;
@@ -581,8 +603,7 @@
  
      // Step 1: Precompute weights for the central region once, stored in an aligned array for SIMD.
      // Decision: Use a static array to avoid recomputing weights for each central position, improving efficiency.
-     ALIGNED static float centralWeights[MAX_WINDOW];
-     ComputeWeights(halfWindowSize, targetPoint, filter.conf.polynomialOrder, filter.conf.derivativeOrder, centralWeights);
+     ComputeWeights(filter); // Use the filter instance
  
      // Step 2: Apply the filter to central data points (where a full window is available).
      // Flow: Iterate over all positions where the window fits within dataSize, computing the convolution.
@@ -596,7 +617,7 @@
          // Decision: Use AVX when available to exploit parallelism, falling back to SSE or scalar if needed.
  #if defined(__AVX__)
          for (j = 0; j <= windowSize - 8; j += 8) {
-             __m256 w = _mm256_load_ps(&centralWeights[j]); // Load 8 weights into a 256-bit vector.
+             __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]); // Load 8 weights into a 256-bit vector.
              __m256 d = _mm256_loadu_ps(&data[i + j].phaseAngle); // Load 8 unaligned data points.
              __m256 prod = _mm256_mul_ps(w, d); // Element-wise multiplication: w[j+k] * d[i+j+k], k=0..7.
              // Horizontal sum: Reduce 8 products to 1 scalar value.
@@ -613,7 +634,7 @@
          // - Similar to AVX but with fewer elements per iteration.
          // Decision: Use SSE for smaller chunks or when AVX isn’t available, ensuring broad compatibility.
          for (; j <= windowSize - 4; j += 4) {
-             __m128 w = _mm_load_ps(&centralWeights[j]); // Load 4 aligned weights.
+             __m128 w = _mm_load_ps(&filter->state.centralWeights[j]); // Load 4 aligned weights.
              __m128 d = _mm_loadu_ps(&data[i + j].phaseAngle); // Load 4 unaligned data points.
              __m128 prod = _mm_mul_ps(w, d); // Element-wise multiplication: w[j+k] * d[i+j+k], k=0..3.
              // Horizontal sum: Reduce 4 products to 1 scalar.
@@ -625,7 +646,7 @@
          // Scalar remainder: Handle any leftover elements not divisible by 4 or 8.
          // Decision: Ensure correctness by processing all elements, even if vectorization doesn’t cover them.
          for (; j < windowSize; ++j) {
-             sum += centralWeights[j] * data[i + j].phaseAngle;
+             sum += filter->state.centralWeights[j] * data[i + j].phaseAngle;
          }
  
          // Store the result at the center of the window (i + width).
@@ -634,9 +655,6 @@
      }
  
      // Step 3: Handle edge cases (leading and trailing edges) using mirror padding.
-     // Flow: For positions where a full window isn’t available, mirror data and apply weights.
-     ALIGNED static float weights[MAX_WINDOW]; // Reusable weights array for edge computations.
-     ALIGNED float tempWindow[MAX_WINDOW];     // Temporary buffer for mirrored data, aligned for SIMD.
  
      for (int i = 0; i < width; ++i) {
          int j;
@@ -644,22 +662,23 @@
          // --- Leading Edge ---
          // Compute weights with targetPoint shifting toward the start (width - i).
          // Decision: Adjust targetPoint per position to fit the polynomial at the edge, mirroring scalar logic.
-         ComputeWeights(halfWindowSize, width - i, filter.conf.polynomialOrder, filter.conf.derivativeOrder, weights);
+         filter->conf.targetPoint = width - i; // IS THIS CORRECT?
+         ComputeWeights(filter); // Use the filter instance
          float leadingSum = 0.0f;
  
          // Fill tempWindow with mirrored data: reflect points around index 0.
          // - Indices go from windowSize-1 down to 0 (e.g., for N=5: 4, 3, 2, 1, 0).
          for (j = 0; j < windowSize; ++j) {
              int dataIdx = windowSize - j - 1;
-             tempWindow[j] = data[dataIdx].phaseAngle;
+             filter->state.tempWindow[j] = data[dataIdx].phaseAngle;
          }
  
          // Vectorization (AVX): Process 8 mirrored elements at a time.
          // - tempWindow is aligned, allowing load_ps instead of loadu_ps for better performance.
  #if defined(__AVX__)
          for (j = 0; j <= windowSize - 8; j += 8) {
-             __m256 w = _mm256_load_ps(&weights[j]); // Load 8 weights.
-             __m256 d = _mm256_load_ps(&tempWindow[j]); // Load 8 mirrored data points.
+            __m256 w = _mm256_load_ps(&filter->state.weights[j]);
+            __m256 d = _mm256_load_ps(&filter->state.tempWindow[j]);
              __m256 prod = _mm256_mul_ps(w, d); // Element-wise multiplication.
              __m128 hi = _mm256_extractf128_ps(prod, 1);
              __m128 lo = _mm256_castps256_ps128(prod);
@@ -672,8 +691,8 @@
  
          // Vectorization (SSE): Process 4 mirrored elements at a time.
          for (; j <= windowSize - 4; j += 4) {
-             __m128 w = _mm_load_ps(&weights[j]); // Load 4 weights.
-             __m128 d = _mm_load_ps(&tempWindow[j]); // Load 4 mirrored data points.
+             __m128 w = _mm_load_ps(&filter->state.weights[j]);
+            __m128 d = _mm_load_ps(&filter->state.tempWindow[j]);
              __m128 prod = _mm_mul_ps(w, d); // Element-wise multiplication.
              prod = _mm_hadd_ps(prod, prod);
              prod = _mm_hadd_ps(prod, prod);
@@ -682,26 +701,27 @@
  
          // Scalar remainder for leading edge.
          for (; j < windowSize; ++j) {
-             leadingSum += weights[j] * tempWindow[j];
+             leadingSum += filter->state.weights[j] * filter->state.tempWindow[j];
          }
          filteredData[i].phaseAngle = leadingSum; // No filter.dt to match scalar.
  
          // --- Trailing Edge ---
          // Reuse weights from the last leading edge iteration (targetPoint = 1 when i = width - 1).
+         filter->conf.targetPoint = targetPoint;
          float trailingSum = 0.0f;
  
          // Fill tempWindow with mirrored data: use points from lastIndex - windowSize + 1 to lastIndex.
          // - Indices go from lastIndex - N + 1 to lastIndex (e.g., for N=5, lastIndex=9: 5, 6, 7, 8, 9).
          for (j = 0; j < windowSize; ++j) {
              int dataIdx = lastIndex - windowSize + j + 1;
-             tempWindow[j] = data[dataIdx].phaseAngle;
+             filter->state.tempWindow[j] = data[dataIdx].phaseAngle;
          }
  
          // Vectorization (AVX) for trailing edge.
  #if defined(__AVX__)
          for (j = 0; j <= windowSize - 8; j += 8) {
-             __m256 w = _mm256_load_ps(&weights[j]); // Reuse last leading edge weights.
-             __m256 d = _mm256_load_ps(&tempWindow[j]); // Load 8 mirrored data points.
+             __m256 w = _mm256_load_ps(&filter->state.weights[j]);
+            __m256 d = _mm256_load_ps(&filter->state.tempWindow[j]);
              __m256 prod = _mm256_mul_ps(w, d);
              __m128 hi = _mm256_extractf128_ps(prod, 1);
              __m128 lo = _mm256_castps256_ps128(prod);
@@ -714,8 +734,8 @@
  
          // Vectorization (SSE) for trailing edge.
          for (; j <= windowSize - 4; j += 4) {
-             __m128 w = _mm_load_ps(&weights[j]);
-             __m128 d = _mm_load_ps(&tempWindow[j]);
+             __m128 w = _mm_load_ps(&filter->state.weights[j]);
+            __m128 d = _mm_load_ps(&filter->state.tempWindow[j]);
              __m128 prod = _mm_mul_ps(w, d);
              prod = _mm_hadd_ps(prod, prod);
              prod = _mm_hadd_ps(prod, prod);
@@ -724,7 +744,7 @@
  
          // Scalar remainder for trailing edge.
          for (; j < windowSize; ++j) {
-             trailingSum += weights[j] * tempWindow[j];
+             trailingSum += filter->state.weights[j] * filter->state.tempWindow[j];
          }
          filteredData[lastIndex - i].phaseAngle = trailingSum; // No filter.dt
      }
@@ -734,48 +754,37 @@
  //-------------------------
  // Main Filter Function with Error Handling
  //-------------------------
- /**
-  * @brief Applies the Savitzky–Golay filter to a data sequence.
-  *
-  * Performs error checking on the parameters, initializes the filter, and calls ApplyFilter().
-  *
-  * @param data Array of raw data points (input).
-  * @param dataSize Number of data points.
-  * @param halfWindowSize Half-window size for the filter.
-  * @param filteredData Array to store the filtered data points (output).
-  * @param polynomialOrder Polynomial order used for the filter.
-  * @param targetPoint The target point within the window.
-  * @param derivativeOrder Derivative order (0 for smoothing).
-  */
- int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
-                      MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
-                      uint8_t targetPoint, uint8_t derivativeOrder) {
-     // Assertions for development to catch invalid parameters early.
-     assert(data != NULL && "Input data pointer must not be NULL");
-     assert(filteredData != NULL && "Filtered data pointer must not be NULL");
-     assert(dataSize > 0 && "Data size must be greater than 0");
-     assert(halfWindowSize > 0 && "Half-window size must be greater than 0");
-     assert((2 * halfWindowSize + 1) <= dataSize && "Filter window size must not exceed data size");
-     assert(polynomialOrder < (2 * halfWindowSize + 1) && "Polynomial order must be less than the filter window size");
-     assert(targetPoint <= (2 * halfWindowSize) && "Target point must be within the filter window");
-     
-     // Runtime checks with error logging.
-     if (data == NULL || filteredData == NULL) {
-         LOG_ERROR("NULL pointer passed to mes_savgolFilter.");
-         return -1;
-     }
-     if (dataSize == 0 || halfWindowSize == 0 ||
-         polynomialOrder >= 2 * halfWindowSize + 1 ||
-         targetPoint > 2 * halfWindowSize ||
-         (2 * halfWindowSize + 1) > dataSize) {
-         LOG_ERROR("Invalid filter parameters provided: dataSize=%zu, halfWindowSize=%d, polynomialOrder=%d, targetPoint=%d.",
-                   dataSize, halfWindowSize, polynomialOrder, targetPoint);
-         return -2;
-     }
-     
-     SavitzkyGolayFilter filter = initFilter(halfWindowSize, polynomialOrder, targetPoint, derivativeOrder, 1.0f);
-     ApplyFilter(data, dataSize, halfWindowSize, targetPoint, filter, filteredData);
-     
-     return 0;
- }
- 
+SavitzkyGolayFilter* mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+                                      MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
+                                      uint8_t targetPoint, uint8_t derivativeOrder) {
+    // Assertions for development to catch invalid parameters early.
+    assert(data != NULL && "Input data pointer must not be NULL");
+    assert(filteredData != NULL && "Filtered data pointer must not be NULL");
+    assert(dataSize > 0 && "Data size must be greater than 0");
+    assert(halfWindowSize > 0 && "Half-window size must be greater than 0");
+    assert((2 * halfWindowSize + 1) <= dataSize && "Filter window size must not exceed data size");
+    assert(polynomialOrder < (2 * halfWindowSize + 1) && "Polynomial order must be less than the filter window size");
+    assert(targetPoint <= (2 * halfWindowSize) && "Target point must be within the filter window");
+    
+    // Runtime checks with error logging.
+    if (data == NULL || filteredData == NULL) {
+        LOG_ERROR("NULL pointer passed to mes_savgolFilter.");
+        return NULL;
+    }
+    if (dataSize == 0 || halfWindowSize == 0 ||
+        polynomialOrder >= 2 * halfWindowSize + 1 ||
+        targetPoint > 2 * halfWindowSize ||
+        (2 * halfWindowSize + 1) > dataSize) {
+        LOG_ERROR("Invalid filter parameters provided: dataSize=%zu, halfWindowSize=%d, polynomialOrder=%d, targetPoint=%d.",
+                  dataSize, halfWindowSize, polynomialOrder, targetPoint);
+        return NULL;
+    }
+    
+    SavitzkyGolayFilter* filter = initFilter(halfWindowSize, polynomialOrder, targetPoint, derivativeOrder, 1.0f);
+    if (filter == NULL) {
+        LOG_ERROR("Failed to initialize filter.");
+        return NULL;
+    }
+    ApplyFilter(data, dataSize, halfWindowSize, targetPoint, filter, filteredData);
+    return filter; // Return the filter instance for the caller to free
+}

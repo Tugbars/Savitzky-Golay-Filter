@@ -86,7 +86,7 @@ int runApplication() {
     uint8_t derivativeOrder = 0;
   
     clock_t tic = clock();
-    mes_savgolFilter(rawData, dataSize, halfWindowSize, filteredData, polynomialOrder, targetPoint, derivativeOrder);
+    SavitzkyGolayFilter *filter = mes_savgolFilter(rawData, dataSize, halfWindowSize, filteredData, polynomialOrder, targetPoint, derivativeOrder);
     clock_t toc = clock();
 
     printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);

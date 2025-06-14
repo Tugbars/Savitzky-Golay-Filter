@@ -1,0 +1,3 @@
+C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/CMakeFiles/fff-populate.dir
+C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/CMakeFiles/edit_cache.dir
+C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps/fff-subbuild/CMakeFiles/rebuild_cache.dir
