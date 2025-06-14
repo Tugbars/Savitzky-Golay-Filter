@@ -102,7 +102,7 @@ int runApplication() {
     clock_t toc = clock();
 
     printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
-    printDataToFile(filteredData, dataSize, "filtered_output.m");
+    printDataToFile(filteredData, dataSize, "filtered_output.txt");
     
 
     return 0;
@@ -111,5 +111,7 @@ int runApplication() {
 int main(int argc, char **argv) {
     printf("Running application...\n");
     runApplication();
+
+    //while(1);
     return 0;
 }
