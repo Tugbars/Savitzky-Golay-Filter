@@ -39,6 +39,10 @@
 // Constant Definitions
 //-------------------------
 
+#define MAX_HALF_WINDOW_FOR_MEMO 32
+#define MAX_POLY_ORDER_FOR_MEMO   5
+#define MAX_DERIVATIVE_FOR_MEMO   5
+
 /// Maximum window size for the filter (must be an odd number)
 #define MAX_WINDOW 33
 
@@ -90,6 +94,19 @@ typedef struct {
     uint8_t lastPolyOrder;                         // Last polynomial order
     uint8_t lastDerivOrder;                        // Last derivative order
     uint16_t lastTargetPoint;                      // Last target point
+#ifdef ENABLE_MEMOIZATION
+   /// Per-instance Gram‑poly cache: [2*m+1][k+1][d+1]
+    struct {
+        bool   isComputed;
+        float  value;
+    } gramPolyCache[
+        2*MAX_HALF_WINDOW_FOR_MEMO + 1
+    ][
+        MAX_POLY_ORDER_FOR_MEMO
+    ][
+        MAX_DERIVATIVE_FOR_MEMO
+    ];
+#endif
 } SavGolState;
 
 

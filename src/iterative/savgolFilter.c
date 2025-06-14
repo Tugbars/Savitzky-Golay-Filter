@@ -625,7 +625,11 @@ static void ApplyFilter(
         for (; j <= windowSize - 8; j += 8) {
             __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
             __m256 d = _mm256_loadu_ps(&data[i + j].phaseAngle);
+#ifdef __FMA__
+            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
+#else
             __m256 prod = _mm256_mul_ps(w, d);
+#endif
             __m128 hi = _mm256_extractf128_ps(prod, 1);
             __m128 lo = _mm256_castps256_ps128(prod);
             __m128 sum128 = _mm_add_ps(hi, lo);
@@ -641,7 +645,11 @@ static void ApplyFilter(
         for (; j <= windowSize - 4; j += 4) {
             __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
             __m128 d = _mm_loadu_ps(&data[i + j].phaseAngle);
+#ifdef __FMA__
+            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
+#else
             __m128 prod = _mm_mul_ps(w, d);
+#endif
             prod = _mm_hadd_ps(prod, prod);
             prod = _mm_hadd_ps(prod, prod);
             sum += _mm_cvtss_f32(prod);
@@ -650,7 +658,9 @@ static void ApplyFilter(
         // Scalar remainder: Handle any leftover elements not divisible by 4 or 8.
         // Decision: Ensure correctness by processing all elements, even if vectorization doesn’t cover them.
         for (; j < windowSize; ++j) {
-            sum += filter->state.centralWeights[j] * data[i + j].phaseAngle;
+            sum = fmaf(filter->state.centralWeights[j],
+            data[i + j].phaseAngle,
+            sum);
         }
 
         // Store the result at the center of the window (i + width).
@@ -682,7 +692,11 @@ static void ApplyFilter(
         for (j = 0; j <= windowSize - 8; j += 8) {
             __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
             __m256 d = _mm256_load_ps(&filter->state.tempWindow[j]);
+#ifdef __FMA__
+            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
+#else
             __m256 prod = _mm256_mul_ps(w, d);
+#endif
             __m128 hi = _mm256_extractf128_ps(prod, 1);
             __m128 lo = _mm256_castps256_ps128(prod);
             __m128 sum128 = _mm_add_ps(hi, lo);
@@ -696,7 +710,11 @@ static void ApplyFilter(
         for (; j <= windowSize - 4; j += 4) {
             __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
             __m128 d = _mm_load_ps(&filter->state.tempWindow[j]);
+#ifdef __FMA__
+            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
+#else
             __m128 prod = _mm_mul_ps(w, d);
+#endif
             prod = _mm_hadd_ps(prod, prod);
             prod = _mm_hadd_ps(prod, prod);
             leadingSum += _mm_cvtss_f32(prod);
@@ -704,7 +722,9 @@ static void ApplyFilter(
 
         // Scalar remainder for leading edge.
         for (; j < windowSize; ++j) {
-            leadingSum += filter->state.centralWeights[j] * filter->state.tempWindow[j];
+            leadingSum = fmaf(filter->state.centralWeights[j],
+                  filter->state.tempWindow[j],
+                  leadingSum);
         }
         filteredData[i].phaseAngle = leadingSum;
 
@@ -726,7 +746,11 @@ static void ApplyFilter(
         for (j = 0; j <= windowSize - 8; j += 8) {
             __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
             __m256 d = _mm256_load_ps(&filter->state.tempWindow[j]);
+#ifdef __FMA__
+            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
+#else
             __m256 prod = _mm256_mul_ps(w, d);
+#endif
             __m128 hi = _mm256_extractf128_ps(prod, 1);
             __m128 lo = _mm256_castps256_ps128(prod);
             __m128 sum128 = _mm_add_ps(hi, lo);
@@ -736,11 +760,16 @@ static void ApplyFilter(
         }
 #endif
 
+
         // Vectorization (SSE) for trailing edge.
         for (; j <= windowSize - 4; j += 4) {
             __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
             __m128 d = _mm_load_ps(&filter->state.tempWindow[j]);
+#ifdef __FMA__
+            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
+#else
             __m128 prod = _mm_mul_ps(w, d);
+#endif
             prod = _mm_hadd_ps(prod, prod);
             prod = _mm_hadd_ps(prod, prod);
             trailingSum += _mm_cvtss_f32(prod);
@@ -748,7 +777,9 @@ static void ApplyFilter(
 
         // Scalar remainder for trailing edge.
         for (; j < windowSize; ++j) {
-            trailingSum += filter->state.centralWeights[j] * filter->state.tempWindow[j];
+            trailingSum = fmaf(filter->state.centralWeights[j],
+                   filter->state.tempWindow[j],
+                   trailingSum);
         }
         filteredData[lastIndex - i].phaseAngle = trailingSum;
     }
