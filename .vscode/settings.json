@@ -1,6 +1,7 @@
 {
     "files.associations": {
         ".fantomasignore": "ignore",
-        "immintrin.h": "c"
+        "immintrin.h": "c",
+        "stdlib.h": "c"
     }
 }

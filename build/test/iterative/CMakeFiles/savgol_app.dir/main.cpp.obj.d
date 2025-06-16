@@ -77,4 +77,6 @@ test/iterative/CMakeFiles/savgol_app.dir/main.cpp.obj: \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/c++/cstring \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/string.h \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sec_api/string_s.h \
- C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/include/iterative/savgolFilter.h
+ C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/include/iterative/savgolFilter.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/direct.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/io.h

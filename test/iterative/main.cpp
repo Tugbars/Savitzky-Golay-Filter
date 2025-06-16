@@ -109,7 +109,7 @@ int runApplication() {
 }
 
 int main(int argc, char **argv) {
-    printf("Running application...\n");
+    //printf("Running application...\n");
     runApplication();
 
     //while(1);

@@ -210,8 +210,8 @@ _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/clean:
 # Target rules for target _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir
 
 # All Build rule for target.
-_deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest.dir/all
 _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/all: _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/all
+_deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest.dir/all
 	$(MAKE) $(MAKESILENT) -f _deps\googletest-build\googlemock\CMakeFiles\gmock_main.dir\build.make _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/depend
 	$(MAKE) $(MAKESILENT) -f _deps\googletest-build\googlemock\CMakeFiles\gmock_main.dir\build.make _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/build
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\CMakeFiles --progress-num=3,4 "Built target gmock_main"
@@ -315,11 +315,11 @@ src/iterative/CMakeFiles/savgolFilter.dir/clean:
 # Target rules for target test/iterative/CMakeFiles/savgol_app.dir
 
 # All Build rule for target.
-test/iterative/CMakeFiles/savgol_app.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest.dir/all
-test/iterative/CMakeFiles/savgol_app.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/all
-test/iterative/CMakeFiles/savgol_app.dir/all: _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/all
 test/iterative/CMakeFiles/savgol_app.dir/all: _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/all
+test/iterative/CMakeFiles/savgol_app.dir/all: _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/all
+test/iterative/CMakeFiles/savgol_app.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest.dir/all
 test/iterative/CMakeFiles/savgol_app.dir/all: src/iterative/CMakeFiles/savgolFilter.dir/all
+test/iterative/CMakeFiles/savgol_app.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/all
 	$(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\savgol_app.dir\build.make test/iterative/CMakeFiles/savgol_app.dir/depend
 	$(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\savgol_app.dir\build.make test/iterative/CMakeFiles/savgol_app.dir/build
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\CMakeFiles --progress-num=11,12 "Built target savgol_app"
@@ -345,11 +345,11 @@ test/iterative/CMakeFiles/savgol_app.dir/clean:
 # Target rules for target test/iterative/CMakeFiles/test_savgolFilter.dir
 
 # All Build rule for target.
-test/iterative/CMakeFiles/test_savgolFilter.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest.dir/all
-test/iterative/CMakeFiles/test_savgolFilter.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/all
-test/iterative/CMakeFiles/test_savgolFilter.dir/all: _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/all
 test/iterative/CMakeFiles/test_savgolFilter.dir/all: _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/all
+test/iterative/CMakeFiles/test_savgolFilter.dir/all: _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/all
+test/iterative/CMakeFiles/test_savgolFilter.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest.dir/all
 test/iterative/CMakeFiles/test_savgolFilter.dir/all: src/iterative/CMakeFiles/savgolFilter.dir/all
+test/iterative/CMakeFiles/test_savgolFilter.dir/all: _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/all
 	$(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\test_savgolFilter.dir\build.make test/iterative/CMakeFiles/test_savgolFilter.dir/depend
 	$(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\test_savgolFilter.dir\build.make test/iterative/CMakeFiles/test_savgolFilter.dir/build
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\CMakeFiles --progress-num=13,14 "Built target test_savgolFilter"

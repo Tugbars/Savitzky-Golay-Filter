@@ -7,8 +7,14 @@
  * The filter uses an iterative (dynamic programming) method to compute Gram polynomials,
  * and (optionally) an optimized precomputation for generalized factorial (GenFact) values.
  *
+ *  Features:
+*  - SIMD everywhere (AVX/SSE with proper fallbacks)
+*  - FMA fused‑multiply‑add in scalar, SSE and AVX paths
+*  - Per‑instance memoization for Gram‑polynomials (reentrant/thread‑safe)
+*  - Cache invalidation only when parameters change
+*  - Edge handling fully vectorized where possible, with a clean scalar remainder
  * Author: Tugbars Heptaskin
- * Date: 2025-03-12
+ * Date: 2025-06-14
  */
 
  #include "savgolFilter.h"
@@ -250,37 +256,22 @@
  #ifdef ENABLE_MEMOIZATION
  
  /**
-  * @brief Structure for caching Gram polynomial results.
-  */
- typedef struct {
-     bool isComputed;
-     float value;
- } GramPolyCacheEntry;
- 
- // Define maximum cache dimensions (adjust as needed).
- #define MAX_HALF_WINDOW_FOR_MEMO 32
- #define MAX_POLY_ORDER_FOR_MEMO 5       // Supports polynomial orders 0..4.
- #define MAX_DERIVATIVE_FOR_MEMO 5       // Supports derivative orders 0..4.
- 
- static GramPolyCacheEntry gramPolyCache[2 * MAX_HALF_WINDOW_FOR_MEMO + 1][MAX_POLY_ORDER_FOR_MEMO][MAX_DERIVATIVE_FOR_MEMO];
- 
- /**
   * @brief Clears the memoization cache for the current domain.
   *
   * @param halfWindowSize Half-window size.
   * @param polynomialOrder Polynomial order.
   * @param derivativeOrder Derivative order.
   */
- static void ClearGramPolyCache(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t derivativeOrder) {
-     int maxIndex = 2 * halfWindowSize + 1;
-     for (int i = 0; i < maxIndex; i++) {
-         for (int k = 0; k <= polynomialOrder; k++) {
-             for (int d = 0; d <= derivativeOrder; d++) {
-                 gramPolyCache[i][k][d].isComputed = false;
-             }
-         }
-     }
- }
+void ClearGramPolyCache(SavitzkyGolayFilter* filter) {
+    int maxIndex = 2 * MAX_HALF_WINDOW_FOR_MEMO + 1;
+    for (int i = 0; i < maxIndex; i++) {
+        for (int k = 0; k < MAX_POLY_ORDER_FOR_MEMO; k++) {
+            for (int d = 0; d < MAX_DERIVATIVE_FOR_MEMO; d++) {
+                filter->state.gramPolyCache[i][k][d].isComputed = false;
+            }
+        }
+    }
+}
  
  /**
   * @brief Wrapper for GramPolyIterative with memoization.
@@ -299,38 +290,34 @@
   * @param ctx Pointer to a GramPolyContext containing filter parameters.
   * @return The computed Gram polynomial value.
   */
- static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const GramPolyContext* ctx) {
+float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const GramPolyContext* ctx, SavitzkyGolayFilter* filter) {
      // Shift dataIndex to a nonnegative index for cache lookup.
-     int shiftedIndex = dataIndex + ctx->halfWindowSize;
-     
-     // Check if the shifted index falls outside the range supported by the cache.
-     if (shiftedIndex < 0 || shiftedIndex >= (2 * MAX_HALF_WINDOW_FOR_MEMO + 1)) {
-         // If it's out of range, compute the value directly without memoization.
-         return GramPolyIterative(polynomialOrder, dataIndex, ctx);
-     }
-     
-     // If the polynomial order or derivative order exceeds our cache capacity,
-     // fall back to the iterative computation.
-     if (polynomialOrder >= MAX_POLY_ORDER_FOR_MEMO || ctx->derivativeOrder >= MAX_DERIVATIVE_FOR_MEMO) {
-         return GramPolyIterative(polynomialOrder, dataIndex, ctx);
-     }
-     
-     // Check if the value for these parameters is already computed.
-     if (gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].isComputed) {
-         // Return the cached value.
-         return gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].value;
-     }
-     
+    int shiftedIndex = dataIndex + ctx->halfWindowSize;
+
+    // Check if the shifted index falls outside the range supported by the cache.
+    if (shiftedIndex < 0 || shiftedIndex >= (2 * MAX_HALF_WINDOW_FOR_MEMO + 1) ||
+        polynomialOrder >= MAX_POLY_ORDER_FOR_MEMO ||
+        ctx->derivativeOrder >= MAX_DERIVATIVE_FOR_MEMO) {
+
+        // If it's out of range, compute the value directly without memoization.
+        // If the polynomial order or derivative order exceeds our cache capacity,
+        // fall back to the iterative computation.
+        return GramPolyIterative(polynomialOrder, dataIndex, ctx);
+    }
+    
+    // Check if the value for these parameters is already computed.
+    if (filter->state.gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].isComputed) {
+        return filter->state.gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].value;
+    }
+
      // Compute the Gram polynomial using the iterative method.
-     float value = GramPolyIterative(polynomialOrder, dataIndex, ctx);
-     
-     // Store the computed value in the cache and mark it as computed.
-     gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].value = value;
-     gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].isComputed = true;
-     
-     // Return the newly computed value.
-     return value;
- }
+    float value = GramPolyIterative(polynomialOrder, dataIndex, ctx);
+
+    // Store the computed value in the cache and mark it as computed.
+    filter->state.gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].value = value;
+    filter->state.gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].isComputed = true;
+    return value;
+}
  
  #endif // ENABLE_MEMOIZATION
  
@@ -425,7 +412,7 @@
  #ifdef ENABLE_MEMOIZATION
          float part2 = MemoizedGramPoly(k, targetPoint, ctx);
  #else
-         float part2 = GramPolyIterative(k, targetPoint, ctx);
+         float part2 = GramPolyIterative(k, targetPoint, ctx); // why?
  #endif
  
          // Compute logarithmic terms for the scaling factor.
@@ -461,34 +448,37 @@
   * @param weights Array (size: 2*halfWindowSize+1) to store computed weights.
   */
 static void ComputeWeights(SavitzkyGolayFilter* filter) {
+    // Extract configuration parameters
     uint8_t halfWindowSize = filter->conf.halfWindowSize;
     uint16_t targetPoint = filter->conf.targetPoint;
     uint8_t polynomialOrder = filter->conf.polynomialOrder;
     uint8_t derivativeOrder = filter->conf.derivativeOrder;
     SavGolState* state = &filter->state;
 
-    fflush(stdout);
-
+    // Set up context for Gram polynomial computation
     GramPolyContext ctx = {halfWindowSize, targetPoint, derivativeOrder};
     uint16_t fullWindowSize = 2 * halfWindowSize + 1;
 
+    // Skip computation if weights were previously computed with identical parameters
     if (state->weightsValid &&
         halfWindowSize == state->lastHalfWindowSize &&
         polynomialOrder == state->lastPolyOrder &&
         derivativeOrder == state->lastDerivOrder &&
         targetPoint == state->lastTargetPoint) {
-
         return;
     }
 
 #ifdef ENABLE_MEMOIZATION
+    // If parameters changed, clear per-instance Gram polynomial cache
     if (!state->weightsValid ||
         halfWindowSize != state->lastHalfWindowSize ||
         polynomialOrder != state->lastPolyOrder ||
         derivativeOrder != state->lastDerivOrder ||
         targetPoint != state->lastTargetPoint) {
 
-        ClearGramPolyCache(halfWindowSize, polynomialOrder, derivativeOrder);
+        ClearGramPolyCache(filter);  // resets filter->state.gramPolyCache entries
+
+        // Store parameters for future comparison
         state->lastHalfWindowSize = halfWindowSize;
         state->lastPolyOrder = polynomialOrder;
         state->lastDerivOrder = derivativeOrder;
@@ -497,28 +487,49 @@ static void ComputeWeights(SavitzkyGolayFilter* filter) {
 #endif
 
     int i;
-    //printf("Entering AVX loop with fullWindowSize=%d, condition: i <= %d\n", fullWindowSize, fullWindowSize - 8);
+
+    // --- AVX Vectorized Weight Computation ---
+    // Process full window in chunks of 8 using SIMD
     for (i = 0; i <= fullWindowSize - 8; i += 8) {
         int dataIndices[8] = {
             i - halfWindowSize, i + 1 - halfWindowSize, i + 2 - halfWindowSize, i + 3 - halfWindowSize,
             i + 4 - halfWindowSize, i + 5 - halfWindowSize, i + 6 - halfWindowSize, i + 7 - halfWindowSize
         };
         __m256 w;
-        WeightVectorized(dataIndices, targetPoint, polynomialOrder, &ctx, &w);
-        _mm256_storeu_ps(&state->centralWeights[i], w);
-        //printf("Stored weights for index %d: ", i);
-        //for (int j = 0; j < 8; j++) printf("%.4f ", state->centralWeights[i + j]);
-        printf("\n");
+        WeightVectorized(dataIndices, targetPoint, polynomialOrder, &ctx, &w);  // fast SIMD path
+        _mm256_storeu_ps(&state->centralWeights[i], w);                         // store weights
     }
 
-    //printf("Entering scalar loop from index %d to %d\n", i, fullWindowSize - 1);
+    // --- Scalar Fallback ---
+    // Handle remaining weights (e.g., not divisible by 8)
     for (; i < fullWindowSize; ++i) {
+#ifdef ENABLE_MEMOIZATION
+        // Scalar weight computation with per-instance memoization
+        float part1, part2, w = 0.0f;
+        for (uint8_t k = 0; k <= polynomialOrder; ++k) {
+            part1 = MemoizedGramPoly(k, i - halfWindowSize, &ctx, filter);   // F(k, i, 0)
+            part2 = MemoizedGramPoly(k, targetPoint, &ctx, filter);          // F(k, t, d)
+
+            // Compute weighting factor using log-based factorials (numerical stability)
+            double log_num = logGenFact(2 * ctx.halfWindowSize, k);
+            double log_den = logGenFact(2 * ctx.halfWindowSize + k + 1, k + 1);
+            double log_factor = log(2.0 * k + 1.0) + log_num - log_den;
+            double factor = exp(log_factor);
+
+            // Accumulate weighted polynomial product
+            w += (float)(factor * (double)part1 * (double)part2);
+        }
+        state->centralWeights[i] = w;
+#else
+        // Fallback to default scalar implementation
         state->centralWeights[i] = Weight(i - halfWindowSize, targetPoint, polynomialOrder, &ctx);
-        //printf("Stored weight for index %d: %.4f\n", i, state->centralWeights[i]);
+#endif
     }
 
+    // Mark weights as up-to-date
     state->weightsValid = true;
 }
+
  
  //-------------------------
  // Filter Initialization
