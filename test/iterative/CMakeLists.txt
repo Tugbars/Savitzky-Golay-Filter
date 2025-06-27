@@ -40,7 +40,7 @@ target_include_directories(test_savgolFilter PRIVATE
 
 # Enable AVX for the test executable (optional)
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(test_savgolFilter PRIVATE -mavx -mfma)
+    target_compile_options(savgolFilter PRIVATE -mavx -mfma -std=c11 -Wno-attributes)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     target_compile_options(test_savgolFilter PRIVATE /arch:AVX)
 endif()
