@@ -9,7 +9,9 @@
  * - Fused multiply-add (FMA) in scalar, SSE, AVX, and AVX-512 paths.
  * - Per-instance memoization with versioning for Gram polynomials (thread-safe).
  * - Efficient cache invalidation via versioning.
- * - Aligned memory access, masked stores, and compiler attributes for performance.
+ * - Deeper interleaved prefetching and unrolled loops for improved ILP.
+ * - Optional non-temporal stores to reduce cache pollution.
+ * - Specialized GramPolyVectorized4 for small polynomial orders (<4).
  *
  * Author: Tugbars Heptaskin
  * Date: 2025-06-14
@@ -263,6 +265,111 @@ static __m256 HOT GramPolyVectorized(uint8_t polynomialOrder, const int dataIndi
     return result;
 }
 
+/**
+ * @brief Computes Gram polynomials for 8 data indices using AVX, specialized for polynomialOrder < 4.
+ *
+ * Vectorizes the Gram polynomial computation F(k, d) across 8 data indices using
+ * 256-bit AVX instructions, unrolling the k loop for polynomialOrder=0..3 to avoid
+ * dynamic allocation. Optimized for common small polynomial orders.
+ *
+ * @param polynomialOrder The polynomial order (k) to compute (must be < 4).
+ * @param dataIndices Array of 8 data indices (shifted relative to window center).
+ * @param ctx Pointer to GramPolyContext with filter parameters (halfWindowSize, derivativeOrder).
+ * @return A __m256 vector containing F(k, d) for the 8 indices.
+ */
+static __m256 HOT GramPolyVectorized4(uint8_t polynomialOrder, const int dataIndices[8], const GramPolyContext* ctx) {
+    // Extract filter parameters
+    uint8_t halfWindowSize = ctx->halfWindowSize;    // Half the window size (m)
+    uint8_t derivativeOrder = ctx->derivativeOrder;  // Derivative order (d)
+
+    // Validate polynomialOrder
+    if (polynomialOrder >= 4) {
+        LOG_ERROR("GramPolyVectorized4 called with polynomialOrder=%d >= 4", polynomialOrder);
+        return _mm256_setzero_ps();
+    }
+
+    // Initialize vector constants
+    __m256 zero = _mm256_setzero_ps();
+    __m256 one = _mm256_set1_ps(1.0f);
+
+    // Create array to store intermediate Gram polynomial values
+    // - dp_vec[k][d] for k=0..3, d=0..derivativeOrder
+    __m256 dp_vec[4][MAX_DERIVATIVE_FOR_MEMO];
+
+    // Base case: k=0
+    for (uint8_t d = 0; d <= derivativeOrder; d++) {
+        dp_vec[0][d] = (d == 0) ? one : zero;
+    }
+
+    // Early return for polynomialOrder=0
+    if (polynomialOrder == 0) {
+        return dp_vec[0][derivativeOrder];
+    }
+
+    // Load 8 data indices into a 256-bit vector
+    __m256 dataIndexVec = _mm256_set_ps(
+        (float)dataIndices[7], (float)dataIndices[6], (float)dataIndices[5], (float)dataIndices[4],
+        (float)dataIndices[3], (float)dataIndices[2], (float)dataIndices[1], (float)dataIndices[0]
+    );
+
+    // Precompute inverse of halfWindowSize for k=1 scaling
+    __m256 hwsInv = _mm256_set1_ps(1.0f / halfWindowSize);
+
+    // Compute k=1: F(1, d) = (1/m) * (x * F(0, d) + d * F(0, d-1))
+    for (uint8_t d = 0; d <= derivativeOrder; d++) {
+        __m256 term = _mm256_mul_ps(dataIndexVec, dp_vec[0][d]);
+        if (d > 0) {
+            term = _mm256_fmadd_ps(_mm256_set1_ps((float)d), dp_vec[0][d - 1], term);
+        }
+        dp_vec[1][d] = _mm256_mul_ps(hwsInv, term);
+    }
+
+    // Early return for polynomialOrder=1
+    if (polynomialOrder == 1) {
+        return dp_vec[1][derivativeOrder];
+    }
+
+    // Compute k=2
+    float a2 = (4.0f * 2 - 2.0f) / (2 * (2.0f * halfWindowSize - 2 + 1.0f));
+    float c2 = ((2 - 1.0f) * (2.0f * halfWindowSize + 2)) / (2 * (2.0f * halfWindowSize - 2 + 1.0f));
+    __m256 a2Vec = _mm256_set1_ps(a2);
+    __m256 c2Vec = _mm256_set1_ps(c2);
+    for (uint8_t d = 0; d <= derivativeOrder; d++) {
+        __m256 term = _mm256_mul_ps(dataIndexVec, dp_vec[1][d]);
+        if (d > 0) {
+            term = _mm256_fmadd_ps(_mm256_set1_ps((float)d), dp_vec[1][d - 1], term);
+        }
+        dp_vec[2][d] = _mm256_sub_ps(
+            _mm256_mul_ps(a2Vec, term),
+            _mm256_mul_ps(c2Vec, dp_vec[0][d])
+        );
+    }
+
+    // Early return for polynomialOrder=2
+    if (polynomialOrder == 2) {
+        return dp_vec[2][derivativeOrder];
+    }
+
+    // Compute k=3
+    float a3 = (4.0f * 3 - 2.0f) / (3 * (2.0f * halfWindowSize - 3 + 1.0f));
+    float c3 = ((3 - 1.0f) * (2.0f * halfWindowSize + 3)) / (3 * (2.0f * halfWindowSize - 3 + 1.0f));
+    __m256 a3Vec = _mm256_set1_ps(a3);
+    __m256 c3Vec = _mm256_set1_ps(c3);
+    for (uint8_t d = 0; d <= derivativeOrder; d++) {
+        __m256 term = _mm256_mul_ps(dataIndexVec, dp_vec[2][d]);
+        if (d > 0) {
+            term = _mm256_fmadd_ps(_mm256_set1_ps((float)d), dp_vec[2][d - 1], term);
+        }
+        dp_vec[3][d] = _mm256_sub_ps(
+            _mm256_mul_ps(a3Vec, term),
+            _mm256_mul_ps(c3Vec, dp_vec[1][d])
+        );
+    }
+
+    // Return F(3, derivativeOrder)
+    return dp_vec[3][derivativeOrder];
+}
+
 #ifdef ENABLE_MEMOIZATION
 /**
  * @brief Invalidates the Gram polynomial cache.
@@ -273,7 +380,7 @@ static __m256 HOT GramPolyVectorized(uint8_t polynomialOrder, const int dataIndi
  *
  * @param filter Pointer to SavitzkyGolayFilter containing the cache.
  */
-static void HOT ClearGramPolyCache(SavitzkyGolayFilter* filter) {
+void HOT ClearGramPolyCache(SavitzkyGolayFilter* filter) {
     // Increment cache version to invalidate all cache entries
     filter->state.cacheVersion++;
 }
@@ -286,13 +393,16 @@ static void HOT ClearGramPolyCache(SavitzkyGolayFilter* filter) {
  * otherwise, computes the value using GramPolyIterative, stores it in the cache, and
  * returns it. Uses versioning to ensure cache validity in multi-threaded contexts.
  *
+ * Note: The ALWAYS_INLINE attribute may trigger a warning with low optimization levels
+ * (-O0 or -Og). Use -O2 or -Wno-attributes to suppress.
+ *
  * @param polynomialOrder The polynomial order (k) to compute.
  * @param dataIndex The data index (shifted relative to window center).
  * @param ctx Pointer to GramPolyContext with filter parameters (halfWindowSize, derivativeOrder).
  * @param filter Pointer to SavitzkyGolayFilter for cache access.
  * @return The computed or cached Gram polynomial value.
  */
-static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const GramPolyContext* ctx, SavitzkyGolayFilter* filter) {
+float ALWAYS_INLINE MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const GramPolyContext* ctx, SavitzkyGolayFilter* filter) {
     // Shift dataIndex to a nonnegative index for cache lookup
     // - Adjusts index to range [0, 2*MAX_HALF_WINDOW_FOR_MEMO]
     int shiftedIndex = dataIndex + ctx->halfWindowSize;
@@ -383,7 +493,8 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
  *
  * Calculates weights for eight data points in parallel using 256-bit AVX instructions
  * for performance. Uses memoization (if enabled) and logarithmic factorials for
- * stability. Stores results in an aligned output array.
+ * stability. Stores results in an aligned output array. Uses specialized
+ * GramPolyVectorized4 for polynomialOrder < 4 to avoid allocation overhead.
  *
  * @param dataIndices Array of 8 data indices (shifted relative to window center).
  * @param targetPoint The target point within the window.
@@ -399,7 +510,7 @@ static void HOT WeightVectorized(int dataIndices[8], int targetPoint, uint8_t po
     // Iterate over polynomial orders to compute contributions
     for (uint8_t k = 0; k <= polynomialOrder; ++k) {
         // Compute part1: Vectorized Gram polynomial for 8 indices
-        __m256 part1 = GramPolyVectorized(k, dataIndices, ctx);
+        __m256 part1 = (polynomialOrder < 4) ? GramPolyVectorized4(k, dataIndices, ctx) : GramPolyVectorized(k, dataIndices, ctx);
 
         // Compute part2: Scalar Gram polynomial at targetPoint
         #ifdef ENABLE_MEMOIZATION
@@ -423,8 +534,12 @@ static void HOT WeightVectorized(int dataIndices[8], int targetPoint, uint8_t po
         w = _mm256_fmadd_ps(facp2, part1, w);
     }
 
-    // Store weights in aligned output array
+    // Store weights in aligned output array (use non-temporal stores if enabled)
+    #ifdef USE_NONTEMPORAL_STORES
+    _mm256_stream_ps((float*)weightsOut, w);
+    #else
     _mm256_store_ps((float*)weightsOut, w);
+    #endif
 }
 
 /**
@@ -432,7 +547,8 @@ static void HOT WeightVectorized(int dataIndices[8], int targetPoint, uint8_t po
  *
  * Calculates convolution weights for the filter window (size 2*halfWindowSize+1)
  * using vectorized (AVX2) and scalar paths. Caches weights to avoid recomputation
- * and uses memoization (if enabled) for Gram polynomials.
+ * and uses memoization (if enabled) for Gram polynomials. Supports non-temporal
+ * stores for centralWeights if USE_NONTEMPORAL_STORES is defined.
  *
  * @param filter Pointer to SavitzkyGolayFilter with configuration and state.
  */
@@ -447,8 +563,6 @@ static void HOT ComputeWeights(SavitzkyGolayFilter* filter) {
     uint16_t fullWindowSize = 2 * halfWindowSize + 1;       // Full window size (N=2m+1) for convolution
 
     // Check if cached weights are valid to avoid recomputation
-    // - Compare current parameters with those used for the last weight computation
-    // - If valid and unchanged, return immediately to reuse existing weights
     if (state->weightsValid &&
         halfWindowSize == state->lastHalfWindowSize &&
         polynomialOrder == state->lastPolyOrder &&
@@ -459,13 +573,12 @@ static void HOT ComputeWeights(SavitzkyGolayFilter* filter) {
 
     #ifdef ENABLE_MEMOIZATION
     // Invalidate Gram polynomial cache if parameters have changed
-    // - Clear cache (increment version) and update last-used parameters
     if (!state->weightsValid ||
         halfWindowSize != state->lastHalfWindowSize ||
         polynomialOrder != state->lastPolyOrder ||
         derivativeOrder != state->lastDerivOrder ||
         targetPoint != state->lastTargetPoint) {
-        ClearGramPolyCache(filter); // Increments cacheVersion for memoization
+        ClearGramPolyCache(filter);
         state->lastHalfWindowSize = halfWindowSize;
         state->lastPolyOrder = polynomialOrder;
         state->lastDerivOrder = derivativeOrder;
@@ -476,36 +589,40 @@ static void HOT ComputeWeights(SavitzkyGolayFilter* filter) {
     // AVX2 vectorized weight computation: process 8 weights at a time
     int i;
     for (i = 0; i <= fullWindowSize - 8; i += 8) {
-        // Initialize array of 8 data indices relative to window center
         int dataIndices[8] = {
             i - halfWindowSize, i + 1 - halfWindowSize, i + 2 - halfWindowSize, i + 3 - halfWindowSize,
             i + 4 - halfWindowSize, i + 5 - halfWindowSize, i + 6 - halfWindowSize, i + 7 - halfWindowSize
         };
-        __m256 w; // 256-bit vector to store 8 computed weights
-        // Compute weights for 8 indices using vectorized Gram polynomials
+        __m256 w;
         WeightVectorized(dataIndices, targetPoint, polynomialOrder, &ctx, filter, &w);
-        // Store weights in aligned centralWeights array (64-byte aligned)
+        // Use non-temporal stores if enabled to avoid cache pollution
+        #ifdef USE_NONTEMPORAL_STORES
+        _mm256_stream_ps(&state->centralWeights[i], w);
+        #else
         _mm256_store_ps(&state->centralWeights[i], w);
+        #endif
     }
 
     // Handle remaining elements (1–7) with masked store
     int remaining = fullWindowSize - i;
     if (remaining) {
-        // Initialize data indices for remaining elements
         int dataIndices[8] = {0};
         for (int j = 0; j < remaining; j++) {
             dataIndices[j] = (i + j) - halfWindowSize;
         }
-        __m256 w; // 256-bit vector for remaining weights
-        // Compute weights for remaining indices
+        __m256 w;
         WeightVectorized(dataIndices, targetPoint, polynomialOrder, &ctx, filter, &w);
-        // Create a mask to store only 'remaining' elements (1–7)
         __m256i mask = _mm256_setr_epi32(
             remaining > 0 ? -1 : 0, remaining > 1 ? -1 : 0, remaining > 2 ? -1 : 0, remaining > 3 ? -1 : 0,
             remaining > 4 ? -1 : 0, remaining > 5 ? -1 : 0, remaining > 6 ? -1 : 0, remaining > 7 ? -1 : 0
         );
-        // Store valid weights using masked store
+        // Use non-temporal masked store if enabled
+        #ifdef USE_NONTEMPORAL_STORES
+        // Note: AVX-512 required for _mm256_mask_stream_ps; fallback to standard store
         _mm256_maskstore_ps(&state->centralWeights[i], mask, w);
+        #else
+        _mm256_maskstore_ps(&state->centralWeights[i], mask, w);
+        #endif
     }
 
     // Mark weights as valid to enable caching
@@ -516,8 +633,8 @@ static void HOT ComputeWeights(SavitzkyGolayFilter* filter) {
  * @brief Initializes the Savitzky–Golay filter structure.
  *
  * Configures a SavitzkyGolayFilter instance with the specified parameters, using
- * fixed-size arrays for weights and temporary storage. Includes error handling for
- * invalid parameters.
+ * fixed-size arrays for weights and temporary storage. Allocates the structure with
+ * 64-byte alignment to ensure centralWeights and tempWindow are aligned.
  *
  * @param halfWindowSize Half-window size (m in N=2m+1).
  * @param polynomialOrder Order of the polynomial for fitting.
@@ -557,13 +674,28 @@ SavitzkyGolayFilter* initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder,
 }
 
 /**
+ * @brief Frees the Savitzky–Golay filter structure.
+ *
+ * Deallocates the filter structure using _mm_free to match the aligned allocation
+ * in initFilter.
+ *
+ * @param filter Pointer to the SavitzkyGolayFilter to free.
+ */
+void freeFilter(SavitzkyGolayFilter* filter) {
+    if (filter != NULL) {
+        _mm_free(filter);
+    }
+}
+
+/**
  * @brief Applies the Savitzky–Golay filter to an array of raw data points.
  *
  * Performs smoothing or differentiation via weighted convolution of the input data
  * with Gram polynomial-derived weights. Handles central, leading, and trailing edge
  * regions with vectorized (AVX-512/AVX/SSE) and scalar paths. Uses mirror padding
- * for edge handling and reuses weights where possible. Includes prefetching for large
- * windows to reduce memory latency.
+ * for edge handling and reuses weights where possible. Includes deeper interleaved
+ * prefetching and unrolled loops for large windows to reduce memory latency and
+ * increase ILP.
  *
  * @param data Input array of measurements (phase angles).
  * @param dataSize Number of elements in data (must be >= window size).
@@ -627,7 +759,6 @@ static void HOT ApplyFilter(
             __mmask16 mask = make_mask(windowSize);
             __m512 w0 = _mm512_maskz_load_ps(mask, w);         // Load weights (aligned)
             __m512 x0 = _mm512_maskz_loadu_ps(mask, x);        // Load data (unaligned)
-            // Compute weighted sum using FMA and reduce to a single float
             acc = hsum512(_mm512_fmadd_ps(w0, x0, _mm512_setzero_ps()));
         } else {
             // Handle larger windows (>16 elements) with unrolled vectorized loops
@@ -637,9 +768,12 @@ static void HOT ApplyFilter(
             // Unroll loop to process 32 floats (2x16 lanes) per iteration
             int j = 0;
             for (; j + 31 < windowSize; j += 32) {
-                // Prefetch next cache line for large windows to reduce cache misses
+                // Deeper interleaved prefetching for large windows
                 if (windowSize > 128) {
-                    _mm_prefetch((char*)(x + j + 64), _MM_HINT_T0);
+                    _mm_prefetch((char*)(x + j + 128), _MM_HINT_T0); // Prefetch 2 cache lines ahead
+                    _mm_prefetch((char*)(x + j + 256), _MM_HINT_T0); // Prefetch 4 cache lines ahead
+                    _mm_prefetch((char*)(w + j + 128), _MM_HINT_T0);
+                    _mm_prefetch((char*)(w + j + 256), _MM_HINT_T0);
                 }
                 // Process lanes 0–15
                 __m512 w0 = _mm512_load_ps(w + j);      // Load weights (aligned)
@@ -650,13 +784,16 @@ static void HOT ApplyFilter(
                 __m512 x1 = _mm512_loadu_ps(x + j + 16); // Load data (unaligned)
                 sum1 = _mm512_fmadd_ps(w1, x1, sum1);    // Fused multiply-add
             }
+            // Handle remaining elements (<32) with masked store
+            if (j < windowSize) {
+                __mmask16 mask = make_mask(windowSize - j);
+                __m512 w0 = _mm512_maskz_load_ps(mask, w + j);
+                __m512 x0 = _mm512_maskz_loadu_ps(mask, x + j);
+                sum0 = _mm512_fmadd_ps(w0, x0, sum0);
+            }
             // Combine accumulators and reduce to a single float
             __m512 totsum = _mm512_add_ps(sum0, sum1);
             acc = hsum512(totsum);
-            // Handle remaining elements (<32) in a scalar loop
-            for (; j < windowSize; ++j) {
-                acc += w[j] * x[j];
-            }
         }
         // Store the filtered value at the window's center
         filteredData[i + width].phaseAngle = acc;
@@ -733,23 +870,35 @@ static void HOT ApplyFilter(
             __m512 d0 = _mm512_maskz_load_ps(mask, filter->state.tempWindow);     // Load mirrored data
             leadingSum = hsum512(_mm512_fmadd_ps(w0, d0, _mm512_setzero_ps()));
         } else {
-            // Larger windows: vectorized loop with prefetching
+            // Larger windows: vectorized loop with deeper interleaved prefetching
             __m512 sum0 = _mm512_setzero_ps();
-            // Prefetch weights and data for large windows to reduce cache misses
-            if (windowSize > 128) {
-                _mm_prefetch((char*)(filter->state.centralWeights + 64), _MM_HINT_T0);
-                _mm_prefetch((char*)(filter->state.tempWindow + 64), _MM_HINT_T0);
-            }
-            for (j = 0; j <= windowSize - 16; j += 16) {
+            __m512 sum1 = _mm512_setzero_ps();
+            // Unroll loop by 2x to process 32 floats per iteration
+            for (j = 0; j <= windowSize - 32; j += 32) {
+                // Deeper interleaved prefetching two iterations ahead
+                if (windowSize > 128) {
+                    _mm_prefetch((char*)(filter->state.centralWeights + j + 128), _MM_HINT_T0);
+                    _mm_prefetch((char*)(filter->state.tempWindow + j + 128), _MM_HINT_T0);
+                    _mm_prefetch((char*)(filter->state.centralWeights + j + 256), _MM_HINT_T0);
+                    _mm_prefetch((char*)(filter->state.tempWindow + j + 256), _MM_HINT_T0);
+                }
+                // Process lanes 0–15
                 __m512 w0 = _mm512_load_ps(filter->state.centralWeights + j); // Load weights
                 __m512 d0 = _mm512_load_ps(filter->state.tempWindow + j);     // Load mirrored data
                 sum0 = _mm512_fmadd_ps(w0, d0, sum0);                        // FMA
+                // Process lanes 16–31
+                __m512 w1 = _mm512_load_ps(filter->state.centralWeights + j + 16);
+                __m512 d1 = _mm512_load_ps(filter->state.tempWindow + j + 16);
+                sum1 = _mm512_fmadd_ps(w1, d1, sum1);                        // FMA
             }
-            leadingSum = hsum512(sum0);
-            // Scalar tail for remaining elements
-            for (; j < windowSize; ++j) {
-                leadingSum += filter->state.centralWeights[j] * filter->state.tempWindow[j];
+            // Handle remaining elements (<32) with masked store
+            if (j < windowSize) {
+                __mmask16 mask = make_mask(windowSize - j);
+                __m512 w0 = _mm512_maskz_load_ps(mask, filter->state.centralWeights + j);
+                __m512 d0 = _mm512_maskz_load_ps(mask, filter->state.tempWindow + j);
+                sum0 = _mm512_fmadd_ps(w0, d0, sum0);
             }
+            leadingSum = hsum512(_mm512_add_ps(sum0, sum1));
         }
         #else
         // Fallback: scalar loop for non-AVX-512 CPUs
@@ -763,7 +912,6 @@ static void HOT ApplyFilter(
         float trailingSum = 0.0f;
 
         // Fill tempWindow with mirrored data for the trailing edge
-        // - Use points from lastIndex - windowSize + 1 to lastIndex
         for (j = 0; j < windowSize; ++j) {
             int dataIdx = lastIndex - windowSize + j + 1;
             filter->state.tempWindow[j] = data[dataIdx].phaseAngle;
@@ -777,23 +925,35 @@ static void HOT ApplyFilter(
             __m512 d0 = _mm512_maskz_load_ps(mask, filter->state.tempWindow);     // Load mirrored data
             trailingSum = hsum512(_mm512_fmadd_ps(w0, d0, _mm512_setzero_ps()));
         } else {
-            // Larger windows: vectorized loop with prefetching
+            // Larger windows: vectorized loop with deeper interleaved prefetching
             __m512 sum0 = _mm512_setzero_ps();
-            // Prefetch weights and data for large windows to reduce cache misses
-            if (windowSize > 128) {
-                _mm_prefetch((char*)(filter->state.centralWeights + 64), _MM_HINT_T0);
-                _mm_prefetch((char*)(filter->state.tempWindow + 64), _MM_HINT_T0);
-            }
-            for (j = 0; j <= windowSize - 16; j += 16) {
+            __m512 sum1 = _mm512_setzero_ps();
+            // Unroll loop by 2x to process 32 floats per iteration
+            for (j = 0; j <= windowSize - 32; j += 32) {
+                // Deeper interleaved prefetching two iterations ahead
+                if (windowSize > 128) {
+                    _mm_prefetch((char*)(filter->state.centralWeights + j + 128), _MM_HINT_T0);
+                    _mm_prefetch((char*)(filter->state.tempWindow + j + 128), _MM_HINT_T0);
+                    _mm_prefetch((char*)(filter->state.centralWeights + j + 256), _MM_HINT_T0);
+                    _mm_prefetch((char*)(filter->state.tempWindow + j + 256), _MM_HINT_T0);
+                }
+                // Process lanes 0–15
                 __m512 w0 = _mm512_load_ps(filter->state.centralWeights + j); // Reuse weights
                 __m512 d0 = _mm512_load_ps(filter->state.tempWindow + j);     // Load mirrored data
                 sum0 = _mm512_fmadd_ps(w0, d0, sum0);                        // FMA
+                // Process lanes 16–31
+                __m512 w1 = _mm512_load_ps(filter->state.centralWeights + j + 16);
+                __m512 d1 = _mm512_load_ps(filter->state.tempWindow + j + 16);
+                sum1 = _mm512_fmadd_ps(w1, d1, sum1);                        // FMA
             }
-            trailingSum = hsum512(sum0);
-            // Scalar tail
-            for (; j < windowSize; ++j) {
-                trailingSum += filter->state.centralWeights[j] * filter->state.tempWindow[j];
+            // Handle remaining elements (<32) with masked store
+            if (j < windowSize) {
+                __mmask16 mask = make_mask(windowSize - j);
+                __m512 w0 = _mm512_maskz_load_ps(mask, filter->state.centralWeights + j);
+                __m512 d0 = _mm512_maskz_load_ps(mask, filter->state.tempWindow + j);
+                sum0 = _mm512_fmadd_ps(w0, d0, sum0);
             }
+            trailingSum = hsum512(_mm512_add_ps(sum0, sum1));
         }
         #else
         // Fallback: scalar loop
@@ -859,18 +1019,4 @@ SavitzkyGolayFilter* mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize,
 
     // Return the filter instance for caller to free using freeFilter
     return filter;
-}
-
-/**
- * @brief Frees the Savitzky–Golay filter structure.
- *
- * Deallocates the filter structure using _mm_free to match the aligned allocation
- * in initFilter.
- *
- * @param filter Pointer to the SavitzkyGolayFilter to free.
- */
-void freeFilter(SavitzkyGolayFilter* filter) {
-    if (filter != NULL) {
-        _mm_free(filter);
-    }
 }
