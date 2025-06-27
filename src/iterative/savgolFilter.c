@@ -530,6 +530,177 @@ static void ComputeWeights(SavitzkyGolayFilter* filter) {
     state->weightsValid = true;
 }
 
+/*
+static void ApplyFilter(
+    MqsRawDataPoint_t data[],
+    size_t dataSize,
+    uint8_t halfWindowSize,
+    uint16_t targetPoint,
+    SavitzkyGolayFilter* filter,
+    MqsRawDataPoint_t filteredData[])
+{
+    // Validate and cap halfWindowSize
+    uint8_t maxHalfWindowSize = (MAX_WINDOW - 1) / 2;
+    if (halfWindowSize > maxHalfWindowSize) {
+        printf("Warning: halfWindowSize (%d) exceeds maximum allowed (%d). Adjusting.\n",
+               halfWindowSize, maxHalfWindowSize);
+        halfWindowSize = maxHalfWindowSize;
+    }
+
+    int windowSize = 2 * halfWindowSize + 1;
+    int lastIndex   = dataSize - 1;
+    uint8_t width   = halfWindowSize;
+
+    // 1) Precompute central weights for smoothing/differentiation
+    filter->conf.targetPoint = targetPoint;
+    ComputeWeights(filter);
+
+    // 2) Apply to central region
+    for (int i = 0; i <= (int)dataSize - windowSize; ++i) {
+        float sum = 0.0f;
+        int j = 0;
+
+#if defined(__AVX__)
+        // AVX 8‑wide dot‑product
+        for (; j <= windowSize - 8; j += 8) {
+            __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
+            __m256 d = _mm256_loadu_ps(&data[i + j].phaseAngle);
+#ifdef __FMA__
+            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
+#else
+            __m256 prod = _mm256_mul_ps(w, d);
+#endif
+            __m128 hi = _mm256_extractf128_ps(prod, 1);
+            __m128 lo = _mm256_castps256_ps128(prod);
+            __m128 s  = _mm_add_ps(hi, lo);
+            s = _mm_hadd_ps(s, s);
+            s = _mm_hadd_ps(s, s);
+            sum += _mm_cvtss_f32(s);
+        }
+#endif
+
+        // SSE 4‑wide dot‑product
+        for (; j <= windowSize - 4; j += 4) {
+            __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
+            __m128 d = _mm_loadu_ps(&data[i + j].phaseAngle);
+#ifdef __FMA__
+            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
+#else
+            __m128 prod = _mm_mul_ps(w, d);
+#endif
+            prod = _mm_hadd_ps(prod, prod);
+            prod = _mm_hadd_ps(prod, prod);
+            sum += _mm_cvtss_f32(prod);
+        }
+
+        // Scalar remainder
+        for (; j < windowSize; ++j) {
+            sum = fmaf(filter->state.centralWeights[j],
+                        data[i + j].phaseAngle,
+                        sum);
+        }
+
+        filteredData[i + width].phaseAngle = sum;
+    }
+
+    // 3) Edge handling via mirror padding:
+    for (int i = 0; i < width; ++i) {
+        // Compute mirrored‐edge weights once per i
+        filter->conf.targetPoint = width - i;
+        ComputeWeights(filter);
+
+        // Leading edge
+        float leadingSum = 0.0f;
+        // build mirrored window in tempWindow[]
+        for (int j = 0; j < windowSize; ++j) {
+            int idx = windowSize - j - 1;
+            filter->state.tempWindow[j] = data[idx].phaseAngle;
+        }
+        // vector/SSE/scalar accumulate leadingSum
+        int j = 0;
+#if defined(__AVX__)
+        for (; j <= windowSize - 8; j += 8) {
+            __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
+            __m256 d = _mm256_load_ps(&filter->state.tempWindow[j]);
+#ifdef __FMA__
+            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
+#else
+            __m256 prod = _mm256_mul_ps(w, d);
+#endif
+            __m128 hi = _mm256_extractf128_ps(prod, 1);
+            __m128 lo = _mm256_castps256_ps128(prod);
+            __m128 s  = _mm_add_ps(hi, lo);
+            s = _mm_hadd_ps(s, s);
+            s = _mm_hadd_ps(s, s);
+            leadingSum += _mm_cvtss_f32(s);
+        }
+#endif
+        for (; j <= windowSize - 4; j += 4) {
+            __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
+            __m128 d = _mm_load_ps(&filter->state.tempWindow[j]);
+#ifdef __FMA__
+            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
+#else
+            __m128 prod = _mm_mul_ps(w, d);
+#endif
+            prod = _mm_hadd_ps(prod, prod);
+            prod = _mm_hadd_ps(prod, prod);
+            leadingSum += _mm_cvtss_f32(prod);
+        }
+        for (; j < windowSize; ++j) {
+            leadingSum = fmaf(filter->state.centralWeights[j],
+                              filter->state.tempWindow[j],
+                              leadingSum);
+        }
+        filteredData[i].phaseAngle = leadingSum;
+
+        // Trailing edge (reuse *same* weights from above)
+        float trailingSum = 0.0f;
+        // build mirrored window from end of data
+        for (j = 0; j < windowSize; ++j) {
+            int idx = lastIndex - windowSize + j + 1;
+            filter->state.tempWindow[j] = data[idx].phaseAngle;
+        }
+#if defined(__AVX__)
+        for (j = 0; j <= windowSize - 8; j += 8) {
+            __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
+            __m256 d = _mm256_load_ps(&filter->state.tempWindow[j]);
+#ifdef __FMA__
+            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
+#else
+            __m256 prod = _mm256_mul_ps(w, d);
+#endif
+            __m128 hi = _mm256_extractf128_ps(prod, 1);
+            __m128 lo = _mm256_castps256_ps128(prod);
+            __m128 s  = _mm_add_ps(hi, lo);
+            s = _mm_hadd_ps(s, s);
+            s = _mm_hadd_ps(s, s);
+            trailingSum += _mm_cvtss_f32(s);
+        }
+#endif
+        for (; j <= windowSize - 4; j += 4) {
+            __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
+            __m128 d = _mm_load_ps(&filter->state.tempWindow[j]);
+#ifdef __FMA__
+            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
+#else
+            __m128 prod = _mm_mul_ps(w, d);
+#endif
+            prod = _mm_hadd_ps(prod, prod);
+            prod = _mm_hadd_ps(prod, prod);
+            trailingSum += _mm_cvtss_f32(prod);
+        }
+        for (; j < windowSize; ++j) {
+            trailingSum = fmaf(filter->state.centralWeights[j],
+                               filter->state.tempWindow[j],
+                               trailingSum);
+        }
+        filteredData[lastIndex - i].phaseAngle = trailingSum;
+    }
+}
+
+*/
+
  
  //-------------------------
  // Filter Initialization
@@ -596,51 +767,119 @@ SavitzkyGolayFilter* initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder,
  * @param filteredData   Output array to store the filtered results (same length
  *                       as `data[]`).
  */
+
 static void ApplyFilter(
-    MqsRawDataPoint_t data[],
-    size_t dataSize,
-    uint8_t halfWindowSize,
-    uint16_t targetPoint,
-    SavitzkyGolayFilter* filter,
-    MqsRawDataPoint_t filteredData[])
+    MqsRawDataPoint_t data[],           // Input data array
+    size_t dataSize,                    // Number of data points
+    uint8_t halfWindowSize,             // Half of the filter window size (m in N=2m+1)
+    uint16_t targetPoint,               // Target point for central weights
+    SavitzkyGolayFilter* filter,        // Filter configuration and state
+    MqsRawDataPoint_t filteredData[])   // Output filtered data array
 {
-    // Validate and adjust halfWindowSize to ensure it doesn't exceed the maximum allowed window size.
-    // Decision: Cap halfWindowSize to prevent buffer overflows in weights arrays.
+    // Validate inputs to prevent invalid operations
+    if (dataSize < 1 || halfWindowSize == 0) {
+        printf("Error: Invalid input: dataSize=%zu, halfWindowSize=%d\n", dataSize, halfWindowSize);
+        return;
+    }
+
+    // Cap halfWindowSize to prevent buffer overflows in weight arrays
     uint8_t maxHalfWindowSize = (MAX_WINDOW - 1) / 2;
     if (halfWindowSize > maxHalfWindowSize) {
-        printf("Warning: halfWindowSize (%d) exceeds maximum allowed (%d). Adjusting.\n", halfWindowSize, maxHalfWindowSize);
+        printf("Warning: halfWindowSize (%d) exceeds maximum (%d). Adjusting.\n", halfWindowSize, maxHalfWindowSize);
         halfWindowSize = maxHalfWindowSize;
     }
 
-    // Compute window parameters: full window size (N = 2m + 1), last data index, and center offset (m).
-    int windowSize = 2 * halfWindowSize + 1;
-    int lastIndex = dataSize - 1;
-    uint8_t width = halfWindowSize;
+    // Compute window parameters: full window size (N = 2m + 1), last index, and center offset
+    int windowSize = 2 * halfWindowSize + 1; // Full window size for convolution
+    int lastIndex = dataSize - 1;            // Index of the last data point
+    uint8_t width = halfWindowSize;          // Offset to center of the window
 
-    // Step 1: Precompute weights for the central region once, stored in an aligned array for SIMD.
-    // Decision: Use a static array to avoid recomputing weights for each central position, improving efficiency.
+    // Ensure dataSize is sufficient to apply the filter
+    if (dataSize < windowSize) {
+        printf("Error: dataSize (%zu) is smaller than windowSize (%d)\n", dataSize, windowSize);
+        return;
+    }
+
+    // Verify 64-byte alignment for filter arrays to ensure efficient AVX-512 loads
+    assert(((uintptr_t)filter->state.centralWeights & 63) == 0 && "centralWeights must be 64-byte aligned");
+    assert(((uintptr_t)filter->state.tempWindow & 63) == 0 && "tempWindow must be 64-byte aligned");
+    // Note: data[].phaseAngle may not be aligned, so we use unaligned loads (_mm512_loadu_ps) where needed
+
+    // Step 1: Precompute weights for the central region
+    // Set the target point and compute weights for the central data points
     filter->conf.targetPoint = targetPoint;
-    ComputeWeights(filter);
+    ComputeWeights(filter); // Fills filter->state.centralWeights with Savitzky-Golay coefficients
 
-    // Step 2: Apply the filter to central data points (where a full window is available).
-    // Flow: Iterate over all positions where the window fits within dataSize, computing the convolution.
-    for (int i = 0; i <= (int)dataSize - windowSize; ++i) {
-        float sum = 0.0f; // Accumulator for the weighted sum.
+    // Step 2: Apply filter to central data points (where a full window fits)
+    #ifdef __AVX512F__
+    // Optimized path using AVX-512 for Skylake-AVX512 CPUs
+    for (int i = 0; i <= dataSize - windowSize; ++i) {
+        // Restrict pointers to inform compiler of no aliasing, improving optimization
+        float * __restrict__ w = filter->state.centralWeights; // Aligned weights
+        float * __restrict__ x = &data[i].phaseAngle;         // Input data (may not be aligned)
+
+        float acc; // Accumulator for the filtered value
+        if (windowSize <= 16) {
+            // Handle small windows (≤16 elements) with a single masked load
+            // Use a 16-bit mask to select only the valid elements
+            __mmask16 mask = (1u << windowSize) - 1;
+            __m512 w0 = _mm512_maskz_load_ps(mask, w);         // Load weights (aligned)
+            __m512 x0 = _mm512_maskz_loadu_ps(mask, x);        // Load data (unaligned)
+            // Compute weighted sum using FMA and reduce to a single float
+            acc = _mm512_reduce_add_ps(_mm512_fmadd_ps(w0, x0, _mm512_setzero_ps()));
+        } else {
+            // Handle larger windows (>16 elements) with unrolled vectorized loops
+            __m512 sum0 = _mm512_setzero_ps(); // First 16-lane accumulator
+            __m512 sum1 = _mm512_setzero_ps(); // Second 16-lane accumulator
+
+            // Unroll loop to process 32 floats (2x16 lanes) per iteration
+            int j = 0;
+            for (; j + 31 < windowSize; j += 32) {
+                // Prefetch next cache line for large windows to reduce cache misses
+                if (windowSize > 128) {
+                    _mm_prefetch((char*)(x + j + 64), _MM_HINT_T0);
+                }
+
+                // Process lanes 0–15
+                __m512 w0 = _mm512_load_ps(w + j);      // Load weights (aligned)
+                __m512 x0 = _mm512_loadu_ps(x + j);     // Load data (unaligned)
+                sum0 = _mm512_fmadd_ps(w0, x0, sum0);   // Fused multiply-add
+
+                // Process lanes 16–31
+                __m512 w1 = _mm512_load_ps(w + j + 16); // Load weights (aligned)
+                __m512 x1 = _mm512_loadu_ps(x + j + 16); // Load data (unaligned)
+                sum1 = _mm512_fmadd_ps(w1, x1, sum1);    // Fused multiply-add
+            }
+
+            // Combine accumulators and reduce to a single float
+            __m512 totsum = _mm512_add_ps(sum0, sum1);
+            acc = _mm512_reduce_add_ps(totsum);
+
+            // Handle remaining elements (<32) in a scalar loop
+            for (; j < windowSize; ++j) {
+                acc += w[j] * x[j];
+            }
+        }
+
+        // Store the filtered value at the window's center
+        filteredData[i + width].phaseAngle = acc;
+    }
+    #else
+    // Fallback for non-AVX-512 CPUs using AVX/SSE or scalar operations
+    for (int i = 0; i <= dataSize - windowSize; ++i) {
+        float sum = 0.0f; // Accumulator for the weighted sum
         int j = 0;
-
-        // Vectorization (AVX): Process 8 elements at a time using 256-bit registers for performance.
-        // - Load 8 weights and 8 data points, multiply element-wise, and sum horizontally.
-        // - Alignment: centralWeights is aligned (load_ps), data may not be (loadu_ps).
-        // Decision: Use AVX when available to exploit parallelism, falling back to SSE or scalar if needed.
-#if defined(__AVX__)
+        #if defined(__AVX__)
+        // AVX path: process 8 floats at a time
         for (; j <= windowSize - 8; j += 8) {
-            __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
-            __m256 d = _mm256_loadu_ps(&data[i + j].phaseAngle);
-#ifdef __FMA__
-            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
-#else
-            __m256 prod = _mm256_mul_ps(w, d);
-#endif
+            __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]); // Load weights
+            __m256 d = _mm256_loadu_ps(&data[i + j].phaseAngle);        // Load data
+            #ifdef __FMA__
+            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());   // FMA
+            #else
+            __m256 prod = _mm256_mul_ps(w, d);                          // Multiply
+            #endif
+            // Reduce 8 floats to 1 via horizontal adds
             __m128 hi = _mm256_extractf128_ps(prod, 1);
             __m128 lo = _mm256_castps256_ps128(prod);
             __m128 sum128 = _mm_add_ps(hi, lo);
@@ -648,151 +887,114 @@ static void ApplyFilter(
             sum128 = _mm_hadd_ps(sum128, sum128);
             sum += _mm_cvtss_f32(sum128);
         }
-#endif
-
-        // Vectorization (SSE): Process 4 elements at a time using 128-bit registers for remaining elements.
-        // - Similar to AVX but with fewer elements per iteration.
-        // Decision: Use SSE for smaller chunks or when AVX isn’t available, ensuring broad compatibility.
+        #endif
+        // SSE path: process 4 floats at a time
         for (; j <= windowSize - 4; j += 4) {
-            __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
-            __m128 d = _mm_loadu_ps(&data[i + j].phaseAngle);
-#ifdef __FMA__
-            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
-#else
-            __m128 prod = _mm_mul_ps(w, d);
-#endif
+            __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);    // Load weights
+            __m128 d = _mm_loadu_ps(&data[i + j].phaseAngle);           // Load data
+            #ifdef __FMA__
+            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());         // FMA
+            #else
+            __m128 prod = _mm_mul_ps(w, d);                             // Multiply
+            #endif
+            // Reduce 4 floats to 1 via horizontal adds
             prod = _mm_hadd_ps(prod, prod);
             prod = _mm_hadd_ps(prod, prod);
             sum += _mm_cvtss_f32(prod);
         }
-
-        // Scalar remainder: Handle any leftover elements not divisible by 4 or 8.
-        // Decision: Ensure correctness by processing all elements, even if vectorization doesn’t cover them.
+        // Scalar path: handle remaining elements
         for (; j < windowSize; ++j) {
-            sum = fmaf(filter->state.centralWeights[j],
-            data[i + j].phaseAngle,
-            sum);
+            sum = fmaf(filter->state.centralWeights[j], data[i + j].phaseAngle, sum);
         }
-
-        // Store the result at the center of the window (i + width).
-        // Decision: Omit filter.dt to match the original scalar implementation’s behavior.
+        // Store the filtered value
         filteredData[i + width].phaseAngle = sum;
     }
+    #endif
 
-    // Step 3: Handle edge cases (leading and trailing edges) using mirror padding.
+    // Step 3: Handle edge cases (leading and trailing edges) using mirror padding
     for (int i = 0; i < width; ++i) {
         int j;
 
         // --- Leading Edge ---
-        // Compute weights with targetPoint shifting toward the start (width - i).
-        // Decision: Adjust targetPoint per position to fit the polynomial at the edge, mirroring scalar logic.
+        // Adjust target point to fit polynomial at the edge and compute weights
         filter->conf.targetPoint = width - i;
-        ComputeWeights(filter);
+        ComputeWeights(filter); // Fills centralWeights with edge-specific coefficients
         float leadingSum = 0.0f;
 
-        // Fill tempWindow with mirrored data: reflect points around index 0.
-        // - Indices go from windowSize-1 down to 0 (e.g., for N=5: 4, 3, 2, 1, 0).
+        // Fill tempWindow with mirrored data to handle boundary effects
+        // Reflect points around index 0 (e.g., for N=5: 4, 3, 2, 1, 0)
         for (j = 0; j < windowSize; ++j) {
             int dataIdx = windowSize - j - 1;
             filter->state.tempWindow[j] = data[dataIdx].phaseAngle;
         }
 
-        // Vectorization (AVX): Process 8 mirrored elements at a time.
-        // - tempWindow is aligned, allowing load_ps instead of loadu_ps for better performance.
-#if defined(__AVX__)
-        for (j = 0; j <= windowSize - 8; j += 8) {
-            __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
-            __m256 d = _mm256_load_ps(&filter->state.tempWindow[j]);
-#ifdef __FMA__
-            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
-#else
-            __m256 prod = _mm256_mul_ps(w, d);
-#endif
-            __m128 hi = _mm256_extractf128_ps(prod, 1);
-            __m128 lo = _mm256_castps256_ps128(prod);
-            __m128 sum128 = _mm_add_ps(hi, lo);
-            sum128 = _mm_hadd_ps(sum128, sum128);
-            sum128 = _mm_hadd_ps(sum128, sum128);
-            leadingSum += _mm_cvtss_f32(sum128);
+        #ifdef __AVX512F__
+        if (windowSize <= 16) {
+            // Small windows: use masked load for efficiency
+            __mmask16 mask = (1u << windowSize) - 1;
+            __m512 w0 = _mm512_maskz_load_ps(mask, filter->state.centralWeights); // Load weights
+            __m512 d0 = _mm512_maskz_load_ps(mask, filter->state.tempWindow);     // Load mirrored data
+            leadingSum = _mm512_reduce_add_ps(_mm512_fmadd_ps(w0, d0, _mm512_setzero_ps()));
+        } else {
+            // Larger windows: vectorized loop
+            __m512 sum0 = _mm512_setzero_ps();
+            for (j = 0; j <= windowSize - 16; j += 16) {
+                __m512 w0 = _mm512_load_ps(filter->state.centralWeights + j); // Load weights
+                __m512 d0 = _mm512_load_ps(filter->state.tempWindow + j);     // Load mirrored data
+                sum0 = _mm512_fmadd_ps(w0, d0, sum0);                        // FMA
+            }
+            leadingSum = _mm512_reduce_add_ps(sum0);
+            // Scalar tail for remaining elements
+            for (; j < windowSize; ++j) {
+                leadingSum += filter->state.centralWeights[j] * filter->state.tempWindow[j];
+            }
         }
-#endif
-
-        // Vectorization (SSE): Process 4 mirrored elements at a time.
-        for (; j <= windowSize - 4; j += 4) {
-            __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
-            __m128 d = _mm_load_ps(&filter->state.tempWindow[j]);
-#ifdef __FMA__
-            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
-#else
-            __m128 prod = _mm_mul_ps(w, d);
-#endif
-            prod = _mm_hadd_ps(prod, prod);
-            prod = _mm_hadd_ps(prod, prod);
-            leadingSum += _mm_cvtss_f32(prod);
+        #else
+        // Fallback: scalar loop for non-AVX-512 CPUs
+        for (j = 0; j < windowSize; ++j) {
+            leadingSum = fmaf(filter->state.centralWeights[j], filter->state.tempWindow[j], leadingSum);
         }
+        #endif
+        filteredData[i].phaseAngle = leadingSum; // Store leading edge result
 
-        // Scalar remainder for leading edge.
-        for (; j < windowSize; ++j) {
-            leadingSum = fmaf(filter->state.centralWeights[j],
-                  filter->state.tempWindow[j],
-                  leadingSum);
-        }
-        filteredData[i].phaseAngle = leadingSum;
-
-        // --- Trailing Edge ---
-        // Reuse weights from the last leading edge iteration (targetPoint = 1 when i = width - 1).
-        filter->conf.targetPoint = targetPoint;
-        ComputeWeights(filter);
+        // --- Trailing Edge (reuse mirror-edge weights) ---
         float trailingSum = 0.0f;
 
-        // Fill tempWindow with mirrored data: use points from lastIndex - windowSize + 1 to lastIndex.
-        // - Indices go from lastIndex - N + 1 to lastIndex (e.g., for N=5, lastIndex=9: 5, 6, 7, 8, 9).
+        // Fill tempWindow with mirrored data for the trailing edge
+        // Use points from lastIndex - windowSize + 1 to lastIndex (e.g., for N=5, lastIndex=9: 5, 6, 7, 8, 9)
         for (j = 0; j < windowSize; ++j) {
             int dataIdx = lastIndex - windowSize + j + 1;
             filter->state.tempWindow[j] = data[dataIdx].phaseAngle;
         }
 
-        // Vectorization (AVX) for trailing edge.
-#if defined(__AVX__)
-        for (j = 0; j <= windowSize - 8; j += 8) {
-            __m256 w = _mm256_load_ps(&filter->state.centralWeights[j]);
-            __m256 d = _mm256_load_ps(&filter->state.tempWindow[j]);
-#ifdef __FMA__
-            __m256 prod = _mm256_fmadd_ps(w, d, _mm256_setzero_ps());
-#else
-            __m256 prod = _mm256_mul_ps(w, d);
-#endif
-            __m128 hi = _mm256_extractf128_ps(prod, 1);
-            __m128 lo = _mm256_castps256_ps128(prod);
-            __m128 sum128 = _mm_add_ps(hi, lo);
-            sum128 = _mm_hadd_ps(sum128, sum128);
-            sum128 = _mm_hadd_ps(sum128, sum128);
-            trailingSum += _mm_cvtss_f32(sum128);
+        #ifdef __AVX512F__
+        if (windowSize <= 16) {
+            // Small windows: masked load
+            __mmask16 mask = (1u << windowSize) - 1;
+            __m512 w0 = _mm512_maskz_load_ps(mask, filter->state.centralWeights); // Reuse weights
+            __m512 d0 = _mm512_maskz_load_ps(mask, filter->state.tempWindow);     // Load mirrored data
+            trailingSum = _mm512_reduce_add_ps(_mm512_fmadd_ps(w0, d0, _mm512_setzero_ps()));
+        } else {
+            // Larger windows: vectorized loop
+            __m512 sum0 = _mm512_setzero_ps();
+            for (j = 0; j <= windowSize - 16; j += 16) {
+                __m512 w0 = _mm512_load_ps(filter->state.centralWeights + j); // Reuse weights
+                __m512 d0 = _mm512_load_ps(filter->state.tempWindow + j);     // Load mirrored data
+                sum0 = _mm512_fmadd_ps(w0, d0, sum0);                        // FMA
+            }
+            trailingSum = _mm512_reduce_add_ps(sum0);
+            // Scalar tail
+            for (; j < windowSize; ++j) {
+                trailingSum += filter->state.centralWeights[j] * filter->state.tempWindow[j];
+            }
         }
-#endif
-
-
-        // Vectorization (SSE) for trailing edge.
-        for (; j <= windowSize - 4; j += 4) {
-            __m128 w = _mm_load_ps(&filter->state.centralWeights[j]);
-            __m128 d = _mm_load_ps(&filter->state.tempWindow[j]);
-#ifdef __FMA__
-            __m128 prod = _mm_fmadd_ps(w, d, _mm_setzero_ps());
-#else
-            __m128 prod = _mm_mul_ps(w, d);
-#endif
-            prod = _mm_hadd_ps(prod, prod);
-            prod = _mm_hadd_ps(prod, prod);
-            trailingSum += _mm_cvtss_f32(prod);
+        #else
+        // Fallback: scalar loop
+        for (j = 0; j < windowSize; ++j) {
+            trailingSum = fmaf(filter->state.centralWeights[j], filter->state.tempWindow[j], trailingSum);
         }
-
-        // Scalar remainder for trailing edge.
-        for (; j < windowSize; ++j) {
-            trailingSum = fmaf(filter->state.centralWeights[j],
-                   filter->state.tempWindow[j],
-                   trailingSum);
-        }
-        filteredData[lastIndex - i].phaseAngle = trailingSum;
+        #endif
+        filteredData[lastIndex - i].phaseAngle = trailingSum; // Store trailing edge result
     }
 }
  
