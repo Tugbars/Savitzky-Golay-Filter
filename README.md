@@ -25,7 +25,6 @@ The original scalar implementation remains in the `main` branch, serving as the 
 - **GramPoly Function:** 
   - The GramPoly function in the code calculates Gram polynomials or their derivatives, which are crucial for determining the coefficients of the least squares fitting polynomial in the Savitzky-Golay filter. The function ensures the polynomial basis functions are orthogonal, meaning each order of the polynomial is independent of the others. This orthogonality 
   leads to more stable and meaningful results, especially when dealing with noisy data.
-  - The function employs a recursive approach, where higher-order polynomials are generated from base cases using a defined recursive formula. To optimize efficiency, the function incorporates memoization, storing and reusing previously computed values to minimize redundant calculations and enhance performance. 
 
 - **Filter Application:**
   - Applies the Savitzky-Golay filter to data arrays, smoothly handling both central data points and border cases.
