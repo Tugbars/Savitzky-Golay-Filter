@@ -1,15 +1,15 @@
 /**
- * @file test_savgol_aligned.c
- * @brief Test harness for SIMD Savitzky-Golay filter with aligned memory
+ * @file test_savgol_simple.c
+ * @brief Simple test for Savitzky-Golay filter
  *
- * Demonstrates proper aligned memory allocation for optimal SIMD performance.
- *
- * @author Tugbars Heptaskin
- * @date 2025-10-24
+ * Just shows:
+ * 1. Execution time
+ * 2. Filtered output values
+ * 3. Optional: write to file
  */
 
 #include <stdio.h>
-#include <math.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
@@ -23,27 +23,20 @@
     #include <unistd.h>
 #endif
 
-/**
- * @brief Allocate aligned array of MqsRawDataPoint_t
- *
- * Uses platform-specific aligned allocation to ensure SIMD-friendly alignment.
- *
- * @param count Number of elements
- * @return Pointer to aligned array, or NULL on failure
- */
+//=============================================================================
+// ALIGNED MEMORY ALLOCATION
+//=============================================================================
+
 MqsRawDataPoint_t* allocate_aligned_data(size_t count) {
     void *ptr = NULL;
-    size_t alignment = 64;  // AVX-512 alignment (also good for AVX2/SSE2)
+    size_t alignment = 64;
     size_t size = count * sizeof(MqsRawDataPoint_t);
     
 #if defined(_MSC_VER)
-    // MSVC
     ptr = _aligned_malloc(size, alignment);
 #elif defined(__MINGW32__) || defined(__MINGW64__)
-    // MinGW
     ptr = __mingw_aligned_malloc(size, alignment);
 #else
-    // POSIX (Linux, macOS)
     if (posix_memalign(&ptr, alignment, size) != 0) {
         ptr = NULL;
     }
@@ -52,11 +45,6 @@ MqsRawDataPoint_t* allocate_aligned_data(size_t count) {
     return (MqsRawDataPoint_t*)ptr;
 }
 
-/**
- * @brief Free aligned array
- *
- * @param ptr Pointer to aligned array
- */
 void free_aligned_data(MqsRawDataPoint_t *ptr) {
     if (ptr) {
 #if defined(_MSC_VER)
@@ -69,48 +57,45 @@ void free_aligned_data(MqsRawDataPoint_t *ptr) {
     }
 }
 
-/**
- * @brief Check if pointer is aligned to given boundary
- *
- * @param ptr Pointer to check
- * @param alignment Alignment boundary (must be power of 2)
- * @return true if aligned, false otherwise
- */
-bool is_aligned(const void *ptr, size_t alignment) {
-    return ((uintptr_t)ptr & (alignment - 1)) == 0;
+//=============================================================================
+// OUTPUT FUNCTIONS
+//=============================================================================
+
+void printFilteredData(const MqsRawDataPoint_t data[], size_t dataSize) {
+    printf("\nFiltered Output (%zu values):\n", dataSize);
+    printf("[");
+    for (size_t i = 0; i < dataSize; ++i) {
+        if (i > 0) printf(", ");
+        if (i % 10 == 0 && i > 0) printf("\n ");
+        printf("%.6f", data[i].phaseAngle);
+    }
+    printf("]\n\n");
 }
 
-/**
- * @brief Utility function to print data points to file.
- *
- * @param data Array of data points.
- * @param dataSize Number of data points in the array.
- * @param filename Output filename
- */
-void printDataToFile(const MqsRawDataPoint_t data[], size_t dataSize, const char* filename) {
+void writeToFile(const MqsRawDataPoint_t data[], size_t dataSize, const char* filename) {
     FILE* fp = fopen(filename, "w");
     if (!fp) {
-        perror("Failed to open output file");
+        printf("ERROR: Could not open file '%s'\n", filename);
         return;
     }
 
-    fprintf(fp, "%lu yourSavgolData = [", (unsigned long)dataSize);
     for (size_t i = 0; i < dataSize; ++i) {
-        fprintf(fp, "%f%s", data[i].phaseAngle, (i == dataSize - 1) ? "" : ", ");
+        fprintf(fp, "%.6f\n", data[i].phaseAngle);
     }
-    fprintf(fp, "];\n");
     fclose(fp);
+    printf("Output written to '%s'\n", filename);
 }
 
-/**
- * @brief Main function for testing the Savitzky–Golay filter.
- *
- * This main function reads a predefined dataset, applies the filter with
- * properly aligned memory, and prints the elapsed time and filtered data.
- *
- * @return Exit code.
- */
-int runApplication() {
+//=============================================================================
+// MAIN TEST
+//=============================================================================
+
+int main(int argc, char **argv) {
+    // Check for -f flag (write to file)
+    bool write_file = false;
+    
+    
+    // Test dataset
     double dataset[] = { 
         11.272, 11.254, 11.465, 11.269, 11.31, 11.388, 11.385, 11.431, 11.333, 11.437,
         11.431, 11.527, 11.483, 11.449, 11.544, 11.39, 11.469, 11.526, 11.498, 11.522,
@@ -152,102 +137,64 @@ int runApplication() {
   
     size_t dataSize = sizeof(dataset) / sizeof(dataset[0]);
     
-    //==========================================================================
-    // CRITICAL: Allocate ALIGNED memory for optimal SIMD performance
-    //==========================================================================
+    // Allocate aligned memory
     MqsRawDataPoint_t *rawData = allocate_aligned_data(dataSize);
     MqsRawDataPoint_t *filteredData = allocate_aligned_data(dataSize);
     
     if (!rawData || !filteredData) {
-        fprintf(stderr, "ERROR: Failed to allocate aligned memory\n");
-        free_aligned_data(rawData);
-        free_aligned_data(filteredData);
+        printf("ERROR: Memory allocation failed\n");
         return -1;
     }
     
-    // Verify alignment
-    printf("Memory Alignment Check:\n");
-    printf("  rawData:      %s (address: %p)\n", 
-           is_aligned(rawData, 64) ? "64-byte aligned ✓" : "NOT 64-byte aligned ✗",
-           (void*)rawData);
-    printf("  filteredData: %s (address: %p)\n", 
-           is_aligned(filteredData, 64) ? "64-byte aligned ✓" : "NOT 64-byte aligned ✗",
-           (void*)filteredData);
-    printf("\n");
-    
-    // Initialize data
+    // Copy input data
     for (size_t i = 0; i < dataSize; ++i) {
         rawData[i].phaseAngle = (float)dataset[i];
-        filteredData[i].phaseAngle = 0.0f;
     }
 
-    // Print working directory
-    char cwd[1024];
-    if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        printf("Working directory: %s\n", cwd);
-    }
-
-    // Set filter parameters
+    // Filter parameters
     uint8_t halfWindowSize = 12;
     uint8_t polynomialOrder = 4;
     uint8_t targetPoint = 0;
     uint8_t derivativeOrder = 0;
     
-    printf("\nFilter Parameters:\n");
-    printf("  Window size: %d (halfWindow = %d)\n", 2*halfWindowSize+1, halfWindowSize);
-    printf("  Polynomial order: %d\n", polynomialOrder);
-    printf("  Target point: %d\n", targetPoint);
-    printf("  Derivative order: %d\n", derivativeOrder);
-    printf("  Data size: %zu\n\n", dataSize);
+    printf("Savitzky-Golay Filter Test\n");
+    printf("===========================\n");
+    printf("Data size: %zu\n", dataSize);
+    printf("Window: %d, Order: %d\n\n", 2*halfWindowSize+1, polynomialOrder);
   
-    // Run the filter
-    printf("Running Savitzky-Golay filter...\n");
-    clock_t tic = clock();
-    
-    int result = mes_savgolFilter(rawData, dataSize, halfWindowSize, 
+    // Run filter and time it
+    clock_t start = clock();
+    int result = 0;
+    for(int i = 0; i < 10000; i++)
+    {
+        int result = mes_savgolFilter(rawData, dataSize, halfWindowSize, 
                                   filteredData, polynomialOrder, 
                                   targetPoint, derivativeOrder);
-    
-    clock_t toc = clock();
+    }
+   
+    clock_t end = clock();
     
     if (result != 0) {
-        fprintf(stderr, "ERROR: Filter returned error code %d\n", result);
+        printf("ERROR: Filter failed with code %d\n", result);
         free_aligned_data(rawData);
         free_aligned_data(filteredData);
         return result;
     }
 
-    double elapsed = (double)(toc - tic) / CLOCKS_PER_SEC;
-    printf("Filter completed successfully!\n");
-    printf("Elapsed time: %.6f seconds\n", elapsed);
-    printf("Throughput: %.2f samples/sec\n\n", dataSize / elapsed);
+    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
+    printf("Execution time: %.6f seconds\n", elapsed);
     
-    // Write output
-    printf("Writing filtered data to 'filtered_output.txt'...\n");
-    printDataToFile(filteredData, dataSize, "filtered_output.txt");
-    printf("Done!\n");
+    // Print filtered output
+    printFilteredData(filteredData, dataSize);
+    
+    // Write to file if requested
+    if (write_file) {
+        writeToFile(filteredData, dataSize, "filtered_output.txt");
+    }
     
     // Cleanup
     free_aligned_data(rawData);
     free_aligned_data(filteredData);
 
     return 0;
-}
-
-int main(int argc, char **argv) {
-    printf("=================================================\n");
-    printf("  SIMD Savitzky-Golay Filter Test (Aligned)\n");
-    printf("=================================================\n\n");
-    
-    int result = runApplication();
-    
-    printf("\n=================================================\n");
-    if (result == 0) {
-        printf("  Test PASSED\n");
-    } else {
-        printf("  Test FAILED (error code: %d)\n", result);
-    }
-    printf("=================================================\n");
-    
-    return result;
 }

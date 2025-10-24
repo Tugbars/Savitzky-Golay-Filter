@@ -17,6 +17,9 @@
 //Builds the googlemock subproject
 BUILD_GMOCK:BOOL=ON
 
+//Build Google Test unit tests
+BUILD_GTESTS:BOOL=OFF
+
 //Path to a program.
 CMAKE_ADDR2LINE:FILEPATH=C:/ProgramData/mingw64/mingw64/bin/addr2line.exe
 
@@ -29,8 +32,8 @@ CMAKE_BUILD_TYPE:STRING=Debug
 //Enable/Disable color output during build.
 CMAKE_COLOR_MAKEFILE:BOOL=ON
 
-//No help, variable specified on the command line.
-CMAKE_CXX_COMPILER:FILEPATH=C:/ProgramData/mingw64/mingw64/bin/g++.exe
+//CXX compiler
+CMAKE_CXX_COMPILER:STRING=C:/ProgramData/mingw64/mingw64/bin/g++.exe
 
 //A wrapper around 'ar' adding the appropriate '--plugin' option
 // for the GCC compiler
@@ -58,8 +61,8 @@ CMAKE_CXX_FLAGS_RELWITHDEBINFO:STRING=-O2 -g -DNDEBUG
 //Libraries linked by default with all C++ applications.
 CMAKE_CXX_STANDARD_LIBRARIES:STRING=-lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
 
-//No help, variable specified on the command line.
-CMAKE_C_COMPILER:FILEPATH=C:/ProgramData/mingw64/mingw64/bin/gcc.exe
+//C compiler
+CMAKE_C_COMPILER:STRING=C:/ProgramData/mingw64/mingw64/bin/gcc.exe
 
 //A wrapper around 'ar' adding the appropriate '--plugin' option
 // for the GCC compiler
@@ -306,6 +309,18 @@ CMAKE_TAPI:FILEPATH=CMAKE_TAPI-NOTFOUND
 // during the make.  This is useful for debugging only. With Visual
 // Studio IDE projects all commands are done without /nologo.
 CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
+
+//Enable AVX2 optimizations
+ENABLE_AVX2:BOOL=ON
+
+//Enable AVX-512 optimizations
+ENABLE_AVX512:BOOL=OFF
+
+//Enable -march=native (auto-detect CPU)
+ENABLE_NATIVE:BOOL=OFF
+
+//Enable SSE2 optimizations
+ENABLE_SSE2:BOOL=ON
 
 //Directory under which to collect all populated content
 FETCHCONTENT_BASE_DIR:PATH=C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/_deps

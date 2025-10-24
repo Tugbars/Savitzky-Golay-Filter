@@ -6,5 +6,5 @@ C_DEFINES =
 
 C_INCLUDES = @CMakeFiles/savgolFilter.dir/includes_C.rsp
 
-C_FLAGS = -g -std=gnu11 -mavx -mfma
+C_FLAGS = -g -std=gnu11 -O3 -ffast-math -mavx2 -mfma
 

@@ -184,29 +184,29 @@ savgolFilter/fast:
 	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f src\iterative\CMakeFiles\savgolFilter.dir\build.make src/iterative/CMakeFiles/savgolFilter.dir/build
 .PHONY : savgolFilter/fast
 
-savgolFilter.obj: savgolFilter.c.obj
-.PHONY : savgolFilter.obj
+savgol_filter_vectorized.obj: savgol_filter_vectorized.c.obj
+.PHONY : savgol_filter_vectorized.obj
 
 # target to build an object file
-savgolFilter.c.obj:
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f src\iterative\CMakeFiles\savgolFilter.dir\build.make src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj
-.PHONY : savgolFilter.c.obj
+savgol_filter_vectorized.c.obj:
+	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f src\iterative\CMakeFiles\savgolFilter.dir\build.make src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj
+.PHONY : savgol_filter_vectorized.c.obj
 
-savgolFilter.i: savgolFilter.c.i
-.PHONY : savgolFilter.i
+savgol_filter_vectorized.i: savgol_filter_vectorized.c.i
+.PHONY : savgol_filter_vectorized.i
 
 # target to preprocess a source file
-savgolFilter.c.i:
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f src\iterative\CMakeFiles\savgolFilter.dir\build.make src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.i
-.PHONY : savgolFilter.c.i
+savgol_filter_vectorized.c.i:
+	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f src\iterative\CMakeFiles\savgolFilter.dir\build.make src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.i
+.PHONY : savgol_filter_vectorized.c.i
 
-savgolFilter.s: savgolFilter.c.s
-.PHONY : savgolFilter.s
+savgol_filter_vectorized.s: savgol_filter_vectorized.c.s
+.PHONY : savgol_filter_vectorized.s
 
 # target to generate assembly for a file
-savgolFilter.c.s:
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f src\iterative\CMakeFiles\savgolFilter.dir\build.make src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.s
-.PHONY : savgolFilter.c.s
+savgol_filter_vectorized.c.s:
+	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f src\iterative\CMakeFiles\savgolFilter.dir\build.make src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.s
+.PHONY : savgol_filter_vectorized.c.s
 
 # Help Target
 help:
@@ -222,9 +222,9 @@ help:
 	@echo ... rebuild_cache
 	@echo ... test
 	@echo ... savgolFilter
-	@echo ... savgolFilter.obj
-	@echo ... savgolFilter.i
-	@echo ... savgolFilter.s
+	@echo ... savgol_filter_vectorized.obj
+	@echo ... savgol_filter_vectorized.i
+	@echo ... savgol_filter_vectorized.s
 .PHONY : help
 
 

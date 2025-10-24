@@ -248,19 +248,6 @@ savgol_app/fast:
 	$(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\savgol_app.dir\build.make test/iterative/CMakeFiles/savgol_app.dir/build
 .PHONY : savgol_app/fast
 
-#=============================================================================
-# Target rules for targets named test_savgolFilter
-
-# Build rule for target.
-test_savgolFilter: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 test_savgolFilter
-.PHONY : test_savgolFilter
-
-# fast build rule for target.
-test_savgolFilter/fast:
-	$(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\test_savgolFilter.dir\build.make test/iterative/CMakeFiles/test_savgolFilter.dir/build
-.PHONY : test_savgolFilter/fast
-
 # Help Target
 help:
 	@echo The following are some of the valid targets for this Makefile:
@@ -280,7 +267,6 @@ help:
 	@echo ... gtest_main
 	@echo ... savgolFilter
 	@echo ... savgol_app
-	@echo ... test_savgolFilter
 .PHONY : help
 
 

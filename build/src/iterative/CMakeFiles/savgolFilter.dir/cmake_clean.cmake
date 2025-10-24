@@ -1,6 +1,6 @@
 file(REMOVE_RECURSE
-  "CMakeFiles/savgolFilter.dir/savgolFilter.c.obj"
-  "CMakeFiles/savgolFilter.dir/savgolFilter.c.obj.d"
+  "CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj"
+  "CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj.d"
   "libsavgolFilter.a"
   "libsavgolFilter.pdb"
 )

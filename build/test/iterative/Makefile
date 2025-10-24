@@ -184,20 +184,6 @@ savgol_app/fast:
 	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\savgol_app.dir\build.make test/iterative/CMakeFiles/savgol_app.dir/build
 .PHONY : savgol_app/fast
 
-# Convenience name for target.
-test/iterative/CMakeFiles/test_savgolFilter.dir/rule:
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 test/iterative/CMakeFiles/test_savgolFilter.dir/rule
-.PHONY : test/iterative/CMakeFiles/test_savgolFilter.dir/rule
-
-# Convenience name for target.
-test_savgolFilter: test/iterative/CMakeFiles/test_savgolFilter.dir/rule
-.PHONY : test_savgolFilter
-
-# fast build rule for target.
-test_savgolFilter/fast:
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\test_savgolFilter.dir\build.make test/iterative/CMakeFiles/test_savgolFilter.dir/build
-.PHONY : test_savgolFilter/fast
-
 main.obj: main.cpp.obj
 .PHONY : main.obj
 
@@ -222,30 +208,6 @@ main.cpp.s:
 	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\savgol_app.dir\build.make test/iterative/CMakeFiles/savgol_app.dir/main.cpp.s
 .PHONY : main.cpp.s
 
-test_savgolFilter.obj: test_savgolFilter.cpp.obj
-.PHONY : test_savgolFilter.obj
-
-# target to build an object file
-test_savgolFilter.cpp.obj:
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\test_savgolFilter.dir\build.make test/iterative/CMakeFiles/test_savgolFilter.dir/test_savgolFilter.cpp.obj
-.PHONY : test_savgolFilter.cpp.obj
-
-test_savgolFilter.i: test_savgolFilter.cpp.i
-.PHONY : test_savgolFilter.i
-
-# target to preprocess a source file
-test_savgolFilter.cpp.i:
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\test_savgolFilter.dir\build.make test/iterative/CMakeFiles/test_savgolFilter.dir/test_savgolFilter.cpp.i
-.PHONY : test_savgolFilter.cpp.i
-
-test_savgolFilter.s: test_savgolFilter.cpp.s
-.PHONY : test_savgolFilter.s
-
-# target to generate assembly for a file
-test_savgolFilter.cpp.s:
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build && $(MAKE) $(MAKESILENT) -f test\iterative\CMakeFiles\test_savgolFilter.dir\build.make test/iterative/CMakeFiles/test_savgolFilter.dir/test_savgolFilter.cpp.s
-.PHONY : test_savgolFilter.cpp.s
-
 # Help Target
 help:
 	@echo The following are some of the valid targets for this Makefile:
@@ -260,13 +222,9 @@ help:
 	@echo ... rebuild_cache
 	@echo ... test
 	@echo ... savgol_app
-	@echo ... test_savgolFilter
 	@echo ... main.obj
 	@echo ... main.i
 	@echo ... main.s
-	@echo ... test_savgolFilter.obj
-	@echo ... test_savgolFilter.i
-	@echo ... test_savgolFilter.s
 .PHONY : help
 
 

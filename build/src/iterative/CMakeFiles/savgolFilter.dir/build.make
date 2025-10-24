@@ -68,29 +68,29 @@ include src/iterative/CMakeFiles/savgolFilter.dir/progress.make
 # Include the compile flags for this target's objects.
 include src/iterative/CMakeFiles/savgolFilter.dir/flags.make
 
-src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj: src/iterative/CMakeFiles/savgolFilter.dir/flags.make
-src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj: src/iterative/CMakeFiles/savgolFilter.dir/includes_C.rsp
-src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj: C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgolFilter.c
-src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj: src/iterative/CMakeFiles/savgolFilter.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj"
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\src\iterative && C:\ProgramData\mingw64\mingw64\bin\gcc.exe $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj -MF CMakeFiles\savgolFilter.dir\savgolFilter.c.obj.d -o CMakeFiles\savgolFilter.dir\savgolFilter.c.obj -c C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\src\iterative\savgolFilter.c
+src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj: src/iterative/CMakeFiles/savgolFilter.dir/flags.make
+src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj: src/iterative/CMakeFiles/savgolFilter.dir/includes_C.rsp
+src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj: C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_filter_vectorized.c
+src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj: src/iterative/CMakeFiles/savgolFilter.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj"
+	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\src\iterative && C:\ProgramData\mingw64\mingw64\bin\gcc.exe $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj -MF CMakeFiles\savgolFilter.dir\savgol_filter_vectorized.c.obj.d -o CMakeFiles\savgolFilter.dir\savgol_filter_vectorized.c.obj -c C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\src\iterative\savgol_filter_vectorized.c
 
-src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/savgolFilter.dir/savgolFilter.c.i"
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\src\iterative && C:\ProgramData\mingw64\mingw64\bin\gcc.exe $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\src\iterative\savgolFilter.c > CMakeFiles\savgolFilter.dir\savgolFilter.c.i
+src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.i"
+	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\src\iterative && C:\ProgramData\mingw64\mingw64\bin\gcc.exe $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\src\iterative\savgol_filter_vectorized.c > CMakeFiles\savgolFilter.dir\savgol_filter_vectorized.c.i
 
-src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/savgolFilter.dir/savgolFilter.c.s"
-	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\src\iterative && C:\ProgramData\mingw64\mingw64\bin\gcc.exe $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\src\iterative\savgolFilter.c -o CMakeFiles\savgolFilter.dir\savgolFilter.c.s
+src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.s"
+	cd /d C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\src\iterative && C:\ProgramData\mingw64\mingw64\bin\gcc.exe $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\src\iterative\savgol_filter_vectorized.c -o CMakeFiles\savgolFilter.dir\savgol_filter_vectorized.c.s
 
 # Object files for target savgolFilter
 savgolFilter_OBJECTS = \
-"CMakeFiles/savgolFilter.dir/savgolFilter.c.obj"
+"CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj"
 
 # External object files for target savgolFilter
 savgolFilter_EXTERNAL_OBJECTS =
 
-src/iterative/libsavgolFilter.a: src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj
+src/iterative/libsavgolFilter.a: src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj
 src/iterative/libsavgolFilter.a: src/iterative/CMakeFiles/savgolFilter.dir/build.make
 src/iterative/libsavgolFilter.a: src/iterative/CMakeFiles/savgolFilter.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=C:\Users\Tugbars\Desktop\Savitzky-Golay-Filter\build\CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking C static library libsavgolFilter.a"

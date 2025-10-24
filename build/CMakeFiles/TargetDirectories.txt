@@ -46,7 +46,6 @@ C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/src/iterative/CMakeFiles/in
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/src/iterative/CMakeFiles/install/local.dir
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/src/iterative/CMakeFiles/install/strip.dir
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative/CMakeFiles/savgol_app.dir
-C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative/CMakeFiles/test_savgolFilter.dir
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative/CMakeFiles/test.dir
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative/CMakeFiles/edit_cache.dir
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative/CMakeFiles/rebuild_cache.dir

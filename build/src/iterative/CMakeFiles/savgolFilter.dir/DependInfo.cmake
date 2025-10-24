@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgolFilter.c" "src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj" "gcc" "src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj.d"
+  "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_filter_vectorized.c" "src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj" "gcc" "src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

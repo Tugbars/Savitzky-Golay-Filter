@@ -25,20 +25,14 @@
 },
 {
   "directory": "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/src/iterative",
-  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe  @CMakeFiles/savgolFilter.dir/includes_C.rsp -g -std=gnu11 -mavx -mfma -o CMakeFiles\\savgolFilter.dir\\savgolFilter.c.obj -c C:\\Users\\Tugbars\\Desktop\\Savitzky-Golay-Filter\\src\\iterative\\savgolFilter.c",
-  "file": "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgolFilter.c",
-  "output": "src/iterative/CMakeFiles/savgolFilter.dir/savgolFilter.c.obj"
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe  @CMakeFiles/savgolFilter.dir/includes_C.rsp -g -std=gnu11 -O3 -ffast-math -mavx2 -mfma -o CMakeFiles\\savgolFilter.dir\\savgol_filter_vectorized.c.obj -c C:\\Users\\Tugbars\\Desktop\\Savitzky-Golay-Filter\\src\\iterative\\savgol_filter_vectorized.c",
+  "file": "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_filter_vectorized.c",
+  "output": "src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj"
 },
 {
   "directory": "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative",
-  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\g++.exe  @CMakeFiles/savgol_app.dir/includes_CXX.rsp -g -std=gnu++17 -mavx -mfma -o CMakeFiles\\savgol_app.dir\\main.cpp.obj -c C:\\Users\\Tugbars\\Desktop\\Savitzky-Golay-Filter\\test\\iterative\\main.cpp",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\g++.exe  @CMakeFiles/savgol_app.dir/includes_CXX.rsp -g -std=gnu++17 -mavx2 -mfma -o CMakeFiles\\savgol_app.dir\\main.cpp.obj -c C:\\Users\\Tugbars\\Desktop\\Savitzky-Golay-Filter\\test\\iterative\\main.cpp",
   "file": "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/test/iterative/main.cpp",
   "output": "test/iterative/CMakeFiles/savgol_app.dir/main.cpp.obj"
-},
-{
-  "directory": "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/build/test/iterative",
-  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\g++.exe  @CMakeFiles/test_savgolFilter.dir/includes_CXX.rsp -g -std=gnu++17 -mavx -mfma -o CMakeFiles\\test_savgolFilter.dir\\test_savgolFilter.cpp.obj -c C:\\Users\\Tugbars\\Desktop\\Savitzky-Golay-Filter\\test\\iterative\\test_savgolFilter.cpp",
-  "file": "C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/test/iterative/test_savgolFilter.cpp",
-  "output": "test/iterative/CMakeFiles/test_savgolFilter.dir/test_savgolFilter.cpp.obj"
 }
 ]

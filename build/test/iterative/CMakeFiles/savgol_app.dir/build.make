@@ -93,10 +93,6 @@ savgol_app_EXTERNAL_OBJECTS =
 test/iterative/savgol_app.exe: test/iterative/CMakeFiles/savgol_app.dir/main.cpp.obj
 test/iterative/savgol_app.exe: test/iterative/CMakeFiles/savgol_app.dir/build.make
 test/iterative/savgol_app.exe: src/iterative/libsavgolFilter.a
-test/iterative/savgol_app.exe: lib/libgtest_main.a
-test/iterative/savgol_app.exe: lib/libgmock_main.a
-test/iterative/savgol_app.exe: lib/libgmock.a
-test/iterative/savgol_app.exe: lib/libgtest.a
 test/iterative/savgol_app.exe: test/iterative/CMakeFiles/savgol_app.dir/linkLibs.rsp
 test/iterative/savgol_app.exe: test/iterative/CMakeFiles/savgol_app.dir/objects1.rsp
 test/iterative/savgol_app.exe: test/iterative/CMakeFiles/savgol_app.dir/link.txt

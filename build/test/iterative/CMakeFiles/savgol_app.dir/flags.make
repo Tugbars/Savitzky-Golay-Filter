@@ -6,5 +6,5 @@ CXX_DEFINES =
 
 CXX_INCLUDES = @CMakeFiles/savgol_app.dir/includes_CXX.rsp
 
-CXX_FLAGS = -g -std=gnu++17 -mavx -mfma
+CXX_FLAGS = -g -std=gnu++17 -mavx2 -mfma
 
