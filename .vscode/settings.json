@@ -2,6 +2,8 @@
     "files.associations": {
         ".fantomasignore": "ignore",
         "immintrin.h": "c",
-        "stdlib.h": "c"
+        "stdlib.h": "c",
+        "random": "c",
+        "stdint.h": "c"
     }
 }

@@ -10,6 +10,14 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+#==============================================================================
+# SIMD Configuration Options
+#==============================================================================
+option(ENABLE_AVX512 "Enable AVX-512 optimizations" OFF)
+option(ENABLE_AVX2 "Enable AVX2 optimizations" ON)
+option(ENABLE_SSE2 "Enable SSE2 optimizations" ON)
+option(ENABLE_NATIVE "Enable -march=native (auto-detect CPU)" OFF)
+
 # Ensure Cygwin runtime linkage for all targets
 if (CYGWIN)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lc -lcygwin")
