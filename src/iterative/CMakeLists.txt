@@ -13,6 +13,7 @@ set(HEADERS
     ${SRC_DIR}/savgol_simd_ops.h
     ${SRC_DIR}/savgol_soa_convert.h
     ${SRC_DIR}/savgol_kernels.h
+    ${SRC_DIR}/savgol_reverse_kernels.h
 )
 
 # Create a static library

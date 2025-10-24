@@ -20,6 +20,7 @@
 
 #include "savgol_simd_ops.h"
 #include <string.h>
+#include <stdio.h>
 
 //==============================================================================
 // DOT PRODUCT KERNELS: weights · data
@@ -141,6 +142,7 @@ static inline float savgol_dot_product_avx2(
     const float *data,
     size_t windowSize)
 {
+    printf("");
     // Four accumulators to reduce dependency chains
     __m256 sum0 = VSETZERO_PS_256();
     __m256 sum1 = VSETZERO_PS_256();

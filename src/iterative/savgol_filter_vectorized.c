@@ -23,6 +23,7 @@
 #include "savgol_simd_ops.h"
 #include "savgol_kernels.h"
 #include "savgol_soa_convert.h"
+#include "savgol_reverse_kernels.h"  // <-- NEW: Reverse dot product kernels
 
 #include <stdio.h>
 #include <math.h>
@@ -496,31 +497,26 @@ SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, 
 // SIMD-READY: Filter Application
 //-------------------------
 
+//=============================================================================
+// MAIN FILTER APPLICATION (FULLY SIMD-OPTIMIZED)
+//=============================================================================
+
 /**
- * @brief Applies the Savitzky–Golay filter (SIMD-READY IMPLEMENTATION).
+ * @brief Apply Savitzky-Golay filter with complete SIMD optimization
  *
- * Architecture:
- * 1. Convert AoS → SoA (ONCE at input boundary)
- * 2. Compute weights (aligned memory, called once)
- * 3. Convolution using SIMD dot products (THE HOT LOOP)
- * 4. Convert SoA → AoS (ONCE at output boundary)
+ * @details
+ * ALL three regions now use SIMD:
+ * - Center region: SAVGOL_DOT_PRODUCT (forward access)
+ * - Trailing edge: SAVGOL_DOT_PRODUCT (forward access)
+ * - Leading edge: SAVGOL_REVERSE_DOT_PRODUCT (reverse access) <-- NEW!
  *
- * The SIMD dot product kernels in savgol_kernels.h handle:
- * - Center region: Simple forward convolution
- * - Edge regions: Reversed/custom convolution
- *
- * @param data Array of input data points (AoS format).
- * @param dataSize Number of data points in the input array.
- * @param halfWindowSize Half-window size.
- * @param targetPoint The target point within the window where the fit is evaluated.
- * @param filter The SavitzkyGolayFilter structure containing configuration parameters.
- * @param filteredData Array to store the filtered data points (AoS format).
+ * Mathematical logic unchanged - only performance improved.
  */
 static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
                        uint16_t targetPoint, SavitzkyGolayFilter filter,
                        MqsRawDataPoint_t filteredData[])
 {
-    // Ensure that the halfWindowSize does not exceed the maximum allowed value.
+    // Ensure that the halfWindowSize does not exceed the maximum allowed value
     uint8_t maxHalfWindowSize = (MAX_WINDOW - 1) / 2;
     if (halfWindowSize > maxHalfWindowSize)
     {
@@ -529,7 +525,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
         halfWindowSize = maxHalfWindowSize;
     }
 
-    // Calculate the total number of points in the filter window.
+    // Calculate the total number of points in the filter window
     int windowSize = 2 * halfWindowSize + 1;
     int lastIndex = dataSize - 1;
     uint8_t width = halfWindowSize;
@@ -538,7 +534,6 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     // STEP 1: BOUNDARY OPERATION - Convert AoS to SoA
     //==========================================================================
     // This is done ONCE at the input boundary
-    // Allocate aligned memory for SoA data
     float *soa_data = savgol_alloc_aligned(dataSize);
     float *soa_output = savgol_alloc_aligned(dataSize);
     
@@ -555,7 +550,6 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     //==========================================================================
     // STEP 2: WEIGHT COMPUTATION
     //==========================================================================
-    // Allocate aligned memory for weights (improves SIMD load performance)
     float *weights = savgol_alloc_aligned(windowSize);
     if (!weights) {
         LOG_ERROR("Failed to allocate aligned memory for weights");
@@ -576,19 +570,16 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     
     for (int i = 0; i <= (int)dataSize - windowSize; ++i)
     {
-        // SIMD_DOT_PRODUCT macro dispatches to best available implementation
-        // - Small windows (< 12): Uses 4-chain scalar
-        // - Large windows: Uses AVX-512 (16-wide) / AVX2 (8-wide) / SSE2 (4-wide)
+        // SIMD dot product: weights · data
         float result = SAVGOL_DOT_PRODUCT(weights, &soa_data[i], windowSize);
         soa_output[i + width] = result;
     }
 
     //==========================================================================
-    // STEP 4: EDGE HANDLING
+    // STEP 4: EDGE HANDLING (NOW FULLY SIMD!)
     //==========================================================================
     InitEdgeCacheIfNeeded();
     
-    // Allocate temporary edge weights (aligned)
     float *edgeWeights = savgol_alloc_aligned(windowSize);
     if (!edgeWeights) {
         LOG_ERROR("Failed to allocate memory for edge weights");
@@ -635,20 +626,36 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
             current_edge_weights = edgeWeights;
         }
         
-        // Leading Edge: REVERSED access pattern
-        // For leading edge, we need to access data backwards: data[windowSize-1], data[windowSize-2], ...
-        // This is equivalent to: dot_product(weights, reversed_data)
-        // Instead of reversing data, we traverse backwards
-        float leadingSum = 0.0f;
-        for (int j = 0; j < windowSize; j++) {
-            leadingSum += current_edge_weights[j] * soa_data[windowSize - 1 - j];
-        }
+        //----------------------------------------------------------------------
+        // Leading Edge: REVERSED access pattern (NOW USING SIMD!)
+        //----------------------------------------------------------------------
+        // Mathematical operation: weights[0]*data[N-1] + weights[1]*data[N-2] + ...
+        // 
+        // BEFORE (scalar loop):
+        //   for (int j = 0; j < windowSize; j++)
+        //       sum += weights[j] * soa_data[windowSize - 1 - j];
+        //
+        // AFTER (SIMD):
+        //   Use optimized reverse dot product kernel
+        //
+        // Mathematical equivalence:
+        //   soa_data[windowSize-1-j] == (&soa_data[windowSize-1])[-j]
+        //
+        float leadingSum = SAVGOL_REVERSE_DOT_PRODUCT(
+            current_edge_weights,
+            &soa_data[windowSize - 1],  // Point to LAST element of window
+            windowSize
+        );
         soa_output[i] = leadingSum;
         
-        // Trailing Edge: FORWARD access pattern (same as center)
-        float trailingSum = SAVGOL_DOT_PRODUCT(current_edge_weights, 
-                                               &soa_data[lastIndex - windowSize + 1], 
-                                               windowSize);
+        //----------------------------------------------------------------------
+        // Trailing Edge: FORWARD access pattern (already SIMD-optimized)
+        //----------------------------------------------------------------------
+        float trailingSum = SAVGOL_DOT_PRODUCT(
+            current_edge_weights, 
+            &soa_data[lastIndex - windowSize + 1], 
+            windowSize
+        );
         soa_output[lastIndex - i] = trailingSum;
     }
 

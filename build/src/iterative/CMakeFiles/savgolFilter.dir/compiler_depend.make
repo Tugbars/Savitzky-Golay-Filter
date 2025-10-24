@@ -132,6 +132,7 @@ src/iterative/CMakeFiles/savgolFilter.dir/savgol_filter_vectorized.c.obj: C:/Use
   C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/vadefs.h \
   C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/include/iterative/savgolFilter.h \
   C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_kernels.h \
+  C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_reverse_kernels.h \
   C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_simd_ops.h \
   C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_soa_convert.h
 
@@ -397,6 +398,8 @@ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/vadefs.h:
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/include/iterative/savgolFilter.h:
 
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_kernels.h:
+
+C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_reverse_kernels.h:
 
 C:/Users/Tugbars/Desktop/Savitzky-Golay-Filter/src/iterative/savgol_simd_ops.h:
 
