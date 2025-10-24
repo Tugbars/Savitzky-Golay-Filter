@@ -13,8 +13,8 @@
  * Expected overall speedup: 4-6x
  *
  * Author: Tugbars Heptaskin
- * Date: 2025-02-01
- * Optimized: 2025-02-01
+ * Date: 2025-10-24
+ * Optimized: 2025-10-24
  */
 
 #include "savgolFilter.h"
@@ -490,12 +490,14 @@ SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, 
 //-------------------------
 
 /**
- * @brief Applies the Savitzky–Golay filter to the input data (OPTIMIZED).
+ * @brief Applies the Savitzky–Golay filter (FINAL SCALAR OPTIMIZATION).
  *
- * Optimizations:
- * - Loop unrolling by 4 in convolution
- * - Edge weight caching for repeated calls
- * - Verified edge handling preserved exactly as reference
+ * This version implements parallel accumulation chains to maximize ILP
+ * on modern superscalar CPUs with multiple FMA units.
+ *
+ * Key optimization: Breaking the serial dependency chain in summation
+ * allows the CPU to execute multiple multiply-accumulate operations
+ * simultaneously on different execution ports.
  *
  * @param data Array of input data points.
  * @param dataSize Number of data points in the input array.
@@ -504,15 +506,15 @@ SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, 
  * @param filter The SavitzkyGolayFilter structure containing configuration parameters.
  * @param filteredData Array to store the filtered data points.
  */
-static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize, 
-                       uint16_t targetPoint, SavitzkyGolayFilter filter, 
+static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+                       uint16_t targetPoint, SavitzkyGolayFilter filter,
                        MqsRawDataPoint_t filteredData[])
 {
     // Ensure that the halfWindowSize does not exceed the maximum allowed value.
     uint8_t maxHalfWindowSize = (MAX_WINDOW - 1) / 2;
     if (halfWindowSize > maxHalfWindowSize)
     {
-        printf("Warning: halfWindowSize (%d) exceeds maximum allowed (%d). Adjusting.\n", 
+        printf("Warning: halfWindowSize (%d) exceeds maximum allowed (%d). Adjusting.\n",
                halfWindowSize, maxHalfWindowSize);
         halfWindowSize = maxHalfWindowSize;
     }
@@ -526,69 +528,67 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     static float weights[MAX_WINDOW];
 
     // Step 1: Compute weights for the central window.
-    ComputeWeights(halfWindowSize, targetPoint, filter.conf.polynomialOrder, 
+    ComputeWeights(halfWindowSize, targetPoint, filter.conf.polynomialOrder,
                    filter.conf.derivativeOrder, weights);
 
-    // Step 2: ENHANCED OPTIMIZATION - Pointer arithmetic convolution for central data points
+    // Step 2: FINAL OPTIMIZATION - Multiple accumulation chains for ILP
     for (int i = 0; i <= (int)dataSize - windowSize; ++i)
     {
-        float sum = 0.0f;
+        // Four independent accumulation chains
+        float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, sum3 = 0.0f;
         
-        // Set up base pointers to reduce address calculations
-        const float *w_ptr = weights;                    // Weight pointer
-        const MqsRawDataPoint_t *d_ptr = &data[i];      // Data window pointer
+        // Set up base pointers
+        const float *w_ptr = weights;
+        const MqsRawDataPoint_t *d_ptr = &data[i];
         
-        int remainder = windowSize & 3;  // windowSize % 4
+        int remainder = windowSize & 3;
         
-        // Process remainder with full switch-based unrolling (no loop overhead)
+        // Process remainder with full switch-based unrolling
         switch (remainder) {
-            case 3: 
-                sum += w_ptr[0] * d_ptr[0].phaseAngle;
-                sum += w_ptr[1] * d_ptr[1].phaseAngle;
-                sum += w_ptr[2] * d_ptr[2].phaseAngle;
+            case 3:
+                sum0 += w_ptr[0] * d_ptr[0].phaseAngle;
+                sum1 += w_ptr[1] * d_ptr[1].phaseAngle;
+                sum2 += w_ptr[2] * d_ptr[2].phaseAngle;
                 w_ptr += 3;
                 d_ptr += 3;
                 break;
-            case 2: 
-                sum += w_ptr[0] * d_ptr[0].phaseAngle;
-                sum += w_ptr[1] * d_ptr[1].phaseAngle;
+            case 2:
+                sum0 += w_ptr[0] * d_ptr[0].phaseAngle;
+                sum1 += w_ptr[1] * d_ptr[1].phaseAngle;
                 w_ptr += 2;
                 d_ptr += 2;
                 break;
-            case 1: 
-                sum += w_ptr[0] * d_ptr[0].phaseAngle;
+            case 1:
+                sum0 += w_ptr[0] * d_ptr[0].phaseAngle;
                 w_ptr += 1;
                 d_ptr += 1;
                 break;
-            case 0: 
+            case 0:
                 break;
         }
         
-        // Main unrolled loop by 4 using pointer arithmetic
+        // Main loop with 4 parallel accumulation chains
+        // Each chain is independent, enabling simultaneous execution on superscalar CPU
         int main_iters = (windowSize - remainder) / 4;
         for (int k = 0; k < main_iters; ++k) {
-            // Use pointer arithmetic throughout (single increment per iteration)
-            float t0 = w_ptr[0] * d_ptr[0].phaseAngle;
-            float t1 = w_ptr[1] * d_ptr[1].phaseAngle;
-            float t2 = w_ptr[2] * d_ptr[2].phaseAngle;
-            float t3 = w_ptr[3] * d_ptr[3].phaseAngle;
+            // All four multiply-accumulates can execute in parallel
+            // Modern CPUs (Skylake+, Zen 2+) have 2-3 FMA units
+            sum0 += w_ptr[0] * d_ptr[0].phaseAngle;  // Chain 0
+            sum1 += w_ptr[1] * d_ptr[1].phaseAngle;  // Chain 1 (independent!)
+            sum2 += w_ptr[2] * d_ptr[2].phaseAngle;  // Chain 2 (independent!)
+            sum3 += w_ptr[3] * d_ptr[3].phaseAngle;  // Chain 3 (independent!)
             
-            // Accumulate in same order
-            sum += t0;
-            sum += t1;
-            sum += t2;
-            sum += t3;
-            
-            // Increment pointers once per 4 elements
             w_ptr += 4;
             d_ptr += 4;
         }
         
-        // Store filtered value at center of window
+        // Final reduction: Use pairwise addition for better numerical precision
+        // (a+b) + (c+d) has lower rounding error than ((a+b)+c)+d
+        float sum = (sum0 + sum1) + (sum2 + sum3);
         filteredData[i + width].phaseAngle = sum;
     }
 
-    // Step 3: ENHANCED edge handling with pointer arithmetic
+    // Step 3: Edge handling with multiple accumulation chains
     InitEdgeCacheIfNeeded();
     
     for (int i = 0; i < width; ++i)
@@ -617,7 +617,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
         else
         {
             // Compute fresh weights
-            ComputeWeights(halfWindowSize, target, filter.conf.polynomialOrder, 
+            ComputeWeights(halfWindowSize, target, filter.conf.polynomialOrder,
                           filter.conf.derivativeOrder, tempWeights);
             
             // Cache if possible
@@ -634,30 +634,29 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
             edgeWeights = tempWeights;
         }
         
-        // --- Leading Edge with Pointer Arithmetic (REVERSED DATA ACCESS) ---
-        float leadingSum = 0.0f;
+        // --- Leading Edge (REVERSED) with parallel chains ---
+        float leadSum0 = 0.0f, leadSum1 = 0.0f, leadSum2 = 0.0f, leadSum3 = 0.0f;
         const float *w_ptr = edgeWeights;
-        const MqsRawDataPoint_t *d_ptr = &data[windowSize - 1];  // Start from end of window
+        const MqsRawDataPoint_t *d_ptr = &data[windowSize - 1];
         
         int remainder = windowSize & 3;
         
-        // Remainder handling with pointer arithmetic
         switch (remainder) {
             case 3:
-                leadingSum += w_ptr[0] * d_ptr[0].phaseAngle;
-                leadingSum += w_ptr[1] * d_ptr[-1].phaseAngle;  // Reverse direction
-                leadingSum += w_ptr[2] * d_ptr[-2].phaseAngle;
+                leadSum0 += w_ptr[0] * d_ptr[0].phaseAngle;
+                leadSum1 += w_ptr[1] * d_ptr[-1].phaseAngle;
+                leadSum2 += w_ptr[2] * d_ptr[-2].phaseAngle;
                 w_ptr += 3;
                 d_ptr -= 3;
                 break;
             case 2:
-                leadingSum += w_ptr[0] * d_ptr[0].phaseAngle;
-                leadingSum += w_ptr[1] * d_ptr[-1].phaseAngle;
+                leadSum0 += w_ptr[0] * d_ptr[0].phaseAngle;
+                leadSum1 += w_ptr[1] * d_ptr[-1].phaseAngle;
                 w_ptr += 2;
                 d_ptr -= 2;
                 break;
             case 1:
-                leadingSum += w_ptr[0] * d_ptr[0].phaseAngle;
+                leadSum0 += w_ptr[0] * d_ptr[0].phaseAngle;
                 w_ptr += 1;
                 d_ptr -= 1;
                 break;
@@ -665,47 +664,41 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
                 break;
         }
         
-        // Main loop with pointer arithmetic (reversed direction)
         int main_iters = (windowSize - remainder) / 4;
         for (int k = 0; k < main_iters; ++k) {
-            float t0 = w_ptr[0] * d_ptr[0].phaseAngle;
-            float t1 = w_ptr[1] * d_ptr[-1].phaseAngle;
-            float t2 = w_ptr[2] * d_ptr[-2].phaseAngle;
-            float t3 = w_ptr[3] * d_ptr[-3].phaseAngle;
-            
-            leadingSum += t0;
-            leadingSum += t1;
-            leadingSum += t2;
-            leadingSum += t3;
+            leadSum0 += w_ptr[0] * d_ptr[0].phaseAngle;
+            leadSum1 += w_ptr[1] * d_ptr[-1].phaseAngle;
+            leadSum2 += w_ptr[2] * d_ptr[-2].phaseAngle;
+            leadSum3 += w_ptr[3] * d_ptr[-3].phaseAngle;
             
             w_ptr += 4;
             d_ptr -= 4;
         }
         
+        float leadingSum = (leadSum0 + leadSum1) + (leadSum2 + leadSum3);
         filteredData[i].phaseAngle = leadingSum;
 
-        // --- Trailing Edge with Pointer Arithmetic (FORWARD DATA ACCESS) ---
-        float trailingSum = 0.0f;
+        // --- Trailing Edge (FORWARD) with parallel chains ---
+        float trailSum0 = 0.0f, trailSum1 = 0.0f, trailSum2 = 0.0f, trailSum3 = 0.0f;
         w_ptr = edgeWeights;
-        d_ptr = &data[lastIndex - windowSize + 1];  // Start from beginning of trailing window
+        d_ptr = &data[lastIndex - windowSize + 1];
         
-        // Remainder handling
         switch (remainder) {
             case 3:
-                trailingSum += w_ptr[0] * d_ptr[0].phaseAngle;
-                trailingSum += w_ptr[1] * d_ptr[1].phaseAngle;
-                trailingSum += w_ptr[2] * d_ptr[2].phaseAngle;
+                trailSum0 += w_ptr[0] * d_ptr[0].phaseAngle;
+                trailSum1 += w_ptr[1] * d_ptr[1].phaseAngle;
+                trailSum2 += w_ptr[2] * d_ptr[2].phaseAngle;
                 w_ptr += 3;
                 d_ptr += 3;
                 break;
             case 2:
-                trailingSum += w_ptr[0] * d_ptr[0].phaseAngle;
-                trailingSum += w_ptr[1] * d_ptr[1].phaseAngle;
+                trailSum0 += w_ptr[0] * d_ptr[0].phaseAngle;
+                trailSum1 += w_ptr[1] * d_ptr[1].phaseAngle;
                 w_ptr += 2;
                 d_ptr += 2;
                 break;
             case 1:
-                trailingSum += w_ptr[0] * d_ptr[0].phaseAngle;
+                trailSum0 += w_ptr[0] * d_ptr[0].phaseAngle;
                 w_ptr += 1;
                 d_ptr += 1;
                 break;
@@ -713,22 +706,17 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
                 break;
         }
         
-        // Main loop with pointer arithmetic (forward direction)
         for (int k = 0; k < main_iters; ++k) {
-            float t0 = w_ptr[0] * d_ptr[0].phaseAngle;
-            float t1 = w_ptr[1] * d_ptr[1].phaseAngle;
-            float t2 = w_ptr[2] * d_ptr[2].phaseAngle;
-            float t3 = w_ptr[3] * d_ptr[3].phaseAngle;
-            
-            trailingSum += t0;
-            trailingSum += t1;
-            trailingSum += t2;
-            trailingSum += t3;
+            trailSum0 += w_ptr[0] * d_ptr[0].phaseAngle;
+            trailSum1 += w_ptr[1] * d_ptr[1].phaseAngle;
+            trailSum2 += w_ptr[2] * d_ptr[2].phaseAngle;
+            trailSum3 += w_ptr[3] * d_ptr[3].phaseAngle;
             
             w_ptr += 4;
             d_ptr += 4;
         }
         
+        float trailingSum = (trailSum0 + trailSum1) + (trailSum2 + trailSum3);
         filteredData[lastIndex - i].phaseAngle = trailingSum;
     }
 }
