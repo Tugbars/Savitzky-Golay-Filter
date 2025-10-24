@@ -31,8 +31,12 @@
 /// Maximum window size for the filter (must be an odd number)
 #define MAX_WINDOW 33
 
+#define MAX_DERIVATIVE_FOR_MEMO 5
+
 /// Define to use the optimized version of GenFact (precomputed values)
 #define OPTIMIZE_GENFACT
+
+#define MAX_ORDER 5
 
 /// Uncomment the following line to build with a test main
 // #define TEST_MAIN
