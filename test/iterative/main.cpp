@@ -1,20 +1,91 @@
+/**
+ * @file test_savgol_aligned.c
+ * @brief Test harness for SIMD Savitzky-Golay filter with aligned memory
+ *
+ * Demonstrates proper aligned memory allocation for optimal SIMD performance.
+ *
+ * @author Tugbars Heptaskin
+ * @date 2025-10-24
+ */
+
 #include <stdio.h>
 #include <math.h>
 #include <stdbool.h>
-#include <stdint.h>   // for uint8_t, uint16_t
+#include <stdint.h>
 #include <time.h>
-#include <cstring>
+#include <string.h>
 #include "savgolFilter.h"
-#include <direct.h>
 
+#ifdef _WIN32
+    #include <direct.h>
+    #define getcwd _getcwd
+#else
+    #include <unistd.h>
+#endif
 
 /**
- * @brief Utility function to print data points.
+ * @brief Allocate aligned array of MqsRawDataPoint_t
  *
- * Prints an array of MqsRawDataPoint_t values.
+ * Uses platform-specific aligned allocation to ensure SIMD-friendly alignment.
+ *
+ * @param count Number of elements
+ * @return Pointer to aligned array, or NULL on failure
+ */
+MqsRawDataPoint_t* allocate_aligned_data(size_t count) {
+    void *ptr = NULL;
+    size_t alignment = 64;  // AVX-512 alignment (also good for AVX2/SSE2)
+    size_t size = count * sizeof(MqsRawDataPoint_t);
+    
+#if defined(_MSC_VER)
+    // MSVC
+    ptr = _aligned_malloc(size, alignment);
+#elif defined(__MINGW32__) || defined(__MINGW64__)
+    // MinGW
+    ptr = __mingw_aligned_malloc(size, alignment);
+#else
+    // POSIX (Linux, macOS)
+    if (posix_memalign(&ptr, alignment, size) != 0) {
+        ptr = NULL;
+    }
+#endif
+    
+    return (MqsRawDataPoint_t*)ptr;
+}
+
+/**
+ * @brief Free aligned array
+ *
+ * @param ptr Pointer to aligned array
+ */
+void free_aligned_data(MqsRawDataPoint_t *ptr) {
+    if (ptr) {
+#if defined(_MSC_VER)
+        _aligned_free(ptr);
+#elif defined(__MINGW32__) || defined(__MINGW64__)
+        __mingw_aligned_free(ptr);
+#else
+        free(ptr);
+#endif
+    }
+}
+
+/**
+ * @brief Check if pointer is aligned to given boundary
+ *
+ * @param ptr Pointer to check
+ * @param alignment Alignment boundary (must be power of 2)
+ * @return true if aligned, false otherwise
+ */
+bool is_aligned(const void *ptr, size_t alignment) {
+    return ((uintptr_t)ptr & (alignment - 1)) == 0;
+}
+
+/**
+ * @brief Utility function to print data points to file.
  *
  * @param data Array of data points.
  * @param dataSize Number of data points in the array.
+ * @param filename Output filename
  */
 void printDataToFile(const MqsRawDataPoint_t data[], size_t dataSize, const char* filename) {
     FILE* fp = fopen(filename, "w");
@@ -23,7 +94,7 @@ void printDataToFile(const MqsRawDataPoint_t data[], size_t dataSize, const char
         return;
     }
 
-    fprintf(fp, "%lu yourSavgolData = [", dataSize);
+    fprintf(fp, "%lu yourSavgolData = [", (unsigned long)dataSize);
     for (size_t i = 0; i < dataSize; ++i) {
         fprintf(fp, "%f%s", data[i].phaseAngle, (i == dataSize - 1) ? "" : ", ");
     }
@@ -34,84 +105,149 @@ void printDataToFile(const MqsRawDataPoint_t data[], size_t dataSize, const char
 /**
  * @brief Main function for testing the Savitzky–Golay filter.
  *
- * This main function reads a predefined dataset, applies the filter, and prints the
- * elapsed time and filtered data.
+ * This main function reads a predefined dataset, applies the filter with
+ * properly aligned memory, and prints the elapsed time and filtered data.
  *
  * @return Exit code.
  */
 int runApplication() {
-    double dataset[] = { 11.272, 11.254, 11.465, 11.269, 11.31, 11.388, 11.385, 11.431, 11.333, 11.437,
-                         11.431, 11.527, 11.483, 11.449, 11.544, 11.39, 11.469, 11.526, 11.498, 11.522,
-                         11.709, 11.503, 11.564, 11.428, 11.714, 11.707, 11.619, 11.751, 11.626, 11.681,
-                         11.838, 11.658, 11.859, 11.916, 11.814, 11.833, 12.046, 11.966, 12.031, 12.079,
-                         11.958, 12.114, 12.041, 12.186, 12.048, 12.258, 12.312, 12.126, 12.159, 12.393,
-                         12.221, 12.45, 12.439, 12.282, 12.373, 12.573, 12.647, 12.545, 12.467, 12.629,
-                         12.686, 12.668, 12.748, 12.71, 12.852, 13.02, 12.848, 13.144, 13.225, 13.211,
-                         13.496, 13.311, 13.33, 13.634, 13.189, 13.623, 13.671, 13.618, 13.645, 13.779,
-                         14.006, 14.13, 14.071, 14.277, 14.223, 14.457, 14.378, 14.698, 14.599, 14.84,
-                         15.143, 15.106, 15.343, 15.506, 15.665, 15.889, 15.878, 16.055, 16.153, 15.966,
-                         16.637, 16.783, 16.746, 17.193, 16.877, 17.656, 17.522, 17.842, 18.086, 18.336,
-                         18.863, 18.977, 19.534, 19.308, 19.626, 19.956, 20.221, 20.673, 20.59, 21.229,
-                         21.767, 22.225, 22.477, 22.695, 22.828, 23.586, 23.776, 24.39, 25.316, 24.639,
-                         25.767, 26.469, 26.976, 27.651, 27.807, 28.089, 28.869, 29.964, 30.367, 30.159,
-                         31.133, 32.034, 33.131, 32.775, 34.372, 34.516, 35.603, 36.214, 37.742, 38.868,
-                         38.702, 39.811, 40.818, 41.422, 41.521, 42.57, 42.819, 42.871, 42.944, 43.851,
-                         44.086, 44.272, 44.466, 44.274, 44.473, 44.348, 43.932, 43.817, 43.48, 42.943,
-                         42.491, 41.793, 41.071, 39.491, 39.231, 38.365, 37.833, 36.583, 35.787, 34.949,
-                         33.006, 32.827, 32.266, 31.012, 30.436, 29.737, 28.097, 28.76, 27.068, 26.195,
-                         25.262, 24.677, 24.211, 23.574, 22.868, 22.781, 22.258, 21.475, 21.247, 21.982,
-                         20.771, 20.383, 20.349, 19.866, 19.433, 18.573, 18.723, 18.325, 18.084, 18.226,
-                         17.492, 17.505, 16.762, 16.907, 16.606, 16.265, 16.234, 15.983, 16.147, 15.811,
-                         15.667, 15.509, 15.325, 15.031, 14.884, 14.881, 14.836, 14.814, 14.706, 14.158,
-                         14.399, 14.123, 14.084, 14.173, 13.963, 13.981, 14.218, 13.898, 13.869, 13.701,
-                         13.397, 13.528, 13.321, 13.071, 13.393, 13.164, 12.876, 13.021, 12.989, 12.869,
-                         13.004, 12.833, 12.795, 12.661, 12.761, 12.547, 12.775, 12.388, 12.425, 12.564,
-                         12.408, 12.301, 12.469, 12.173, 12.323, 12.248, 12.281, 12.208, 11.887, 12.149,
-                         12.073, 12.053, 11.88, 12.066, 11.958, 12.007, 11.868, 11.921, 11.898, 11.804,
-                         11.7, 11.81, 11.758, 11.717, 11.715, 11.611, 11.719, 11.679, 11.619, 11.58,
-                         11.576, 11.589, 11.491, 11.659, 11.506, 11.431, 11.535, 11.349, 11.464, 11.343,
-                         11.492, 11.407, 11.479, 11.269, 11.355, 11.323, 11.341, 11.238, 11.32, 11.333,
-                         11.262, 11.31, 11.221, 11.302, 11.135, 11.139, 11.217, 11.343, 11.225, 11.089,
-                         11.079, 11.127, 11.082, 11.141, 11.186, 11.184, 11.231, 11.025, 11.058, 11.076,
-                         11.087, 11.047, 11.02, 10.996, 10.906, 11.144, 11.005, 10.911, 10.993, 10.858,
-                         11.086, 10.954, 10.906, 11.026, 11.005, 10.934, 10.922, 10.914, 10.955, 11.057,
-                         10.967, 10.811, 10.833, 10.747, 10.821, 10.946, 10.844, 10.838, 10.848, 10.847 };
+    double dataset[] = { 
+        11.272, 11.254, 11.465, 11.269, 11.31, 11.388, 11.385, 11.431, 11.333, 11.437,
+        11.431, 11.527, 11.483, 11.449, 11.544, 11.39, 11.469, 11.526, 11.498, 11.522,
+        11.709, 11.503, 11.564, 11.428, 11.714, 11.707, 11.619, 11.751, 11.626, 11.681,
+        11.838, 11.658, 11.859, 11.916, 11.814, 11.833, 12.046, 11.966, 12.031, 12.079,
+        11.958, 12.114, 12.041, 12.186, 12.048, 12.258, 12.312, 12.126, 12.159, 12.393,
+        12.221, 12.45, 12.439, 12.282, 12.373, 12.573, 12.647, 12.545, 12.467, 12.629,
+        12.686, 12.668, 12.748, 12.71, 12.852, 13.02, 12.848, 13.144, 13.225, 13.211,
+        13.496, 13.311, 13.33, 13.634, 13.189, 13.623, 13.671, 13.618, 13.645, 13.779,
+        14.006, 14.13, 14.071, 14.277, 14.223, 14.457, 14.378, 14.698, 14.599, 14.84,
+        15.143, 15.106, 15.343, 15.506, 15.665, 15.889, 15.878, 16.055, 16.153, 15.966,
+        16.637, 16.783, 16.746, 17.193, 16.877, 17.656, 17.522, 17.842, 18.086, 18.336,
+        18.863, 18.977, 19.534, 19.308, 19.626, 19.956, 20.221, 20.673, 20.59, 21.229,
+        21.767, 22.225, 22.477, 22.695, 22.828, 23.586, 23.776, 24.39, 25.316, 24.639,
+        25.767, 26.469, 26.976, 27.651, 27.807, 28.089, 28.869, 29.964, 30.367, 30.159,
+        31.133, 32.034, 33.131, 32.775, 34.372, 34.516, 35.603, 36.214, 37.742, 38.868,
+        38.702, 39.811, 40.818, 41.422, 41.521, 42.57, 42.819, 42.871, 42.944, 43.851,
+        44.086, 44.272, 44.466, 44.274, 44.473, 44.348, 43.932, 43.817, 43.48, 42.943,
+        42.491, 41.793, 41.071, 39.491, 39.231, 38.365, 37.833, 36.583, 35.787, 34.949,
+        33.006, 32.827, 32.266, 31.012, 30.436, 29.737, 28.097, 28.76, 27.068, 26.195,
+        25.262, 24.677, 24.211, 23.574, 22.868, 22.781, 22.258, 21.475, 21.247, 21.982,
+        20.771, 20.383, 20.349, 19.866, 19.433, 18.573, 18.723, 18.325, 18.084, 18.226,
+        17.492, 17.505, 16.762, 16.907, 16.606, 16.265, 16.234, 15.983, 16.147, 15.811,
+        15.667, 15.509, 15.325, 15.031, 14.884, 14.881, 14.836, 14.814, 14.706, 14.158,
+        14.399, 14.123, 14.084, 14.173, 13.963, 13.981, 14.218, 13.898, 13.869, 13.701,
+        13.397, 13.528, 13.321, 13.071, 13.393, 13.164, 12.876, 13.021, 12.989, 12.869,
+        13.004, 12.833, 12.795, 12.661, 12.761, 12.547, 12.775, 12.388, 12.425, 12.564,
+        12.408, 12.301, 12.469, 12.173, 12.323, 12.248, 12.281, 12.208, 11.887, 12.149,
+        12.073, 12.053, 11.88, 12.066, 11.958, 12.007, 11.868, 11.921, 11.898, 11.804,
+        11.7, 11.81, 11.758, 11.717, 11.715, 11.611, 11.719, 11.679, 11.619, 11.58,
+        11.576, 11.589, 11.491, 11.659, 11.506, 11.431, 11.535, 11.349, 11.464, 11.343,
+        11.492, 11.407, 11.479, 11.269, 11.355, 11.323, 11.341, 11.238, 11.32, 11.333,
+        11.262, 11.31, 11.221, 11.302, 11.135, 11.139, 11.217, 11.343, 11.225, 11.089,
+        11.079, 11.127, 11.082, 11.141, 11.186, 11.184, 11.231, 11.025, 11.058, 11.076,
+        11.087, 11.047, 11.02, 10.996, 10.906, 11.144, 11.005, 10.911, 10.993, 10.858,
+        11.086, 10.954, 10.906, 11.026, 11.005, 10.934, 10.922, 10.914, 10.955, 11.057,
+        10.967, 10.811, 10.833, 10.747, 10.821, 10.946, 10.844, 10.838, 10.848, 10.847 
+    };
   
     size_t dataSize = sizeof(dataset) / sizeof(dataset[0]);
     
-    // Allocate arrays for the raw and filtered data.
-    MqsRawDataPoint_t rawData[dataSize];
-    MqsRawDataPoint_t filteredData[dataSize];
+    //==========================================================================
+    // CRITICAL: Allocate ALIGNED memory for optimal SIMD performance
+    //==========================================================================
+    MqsRawDataPoint_t *rawData = allocate_aligned_data(dataSize);
+    MqsRawDataPoint_t *filteredData = allocate_aligned_data(dataSize);
+    
+    if (!rawData || !filteredData) {
+        fprintf(stderr, "ERROR: Failed to allocate aligned memory\n");
+        free_aligned_data(rawData);
+        free_aligned_data(filteredData);
+        return -1;
+    }
+    
+    // Verify alignment
+    printf("Memory Alignment Check:\n");
+    printf("  rawData:      %s (address: %p)\n", 
+           is_aligned(rawData, 64) ? "64-byte aligned ✓" : "NOT 64-byte aligned ✗",
+           (void*)rawData);
+    printf("  filteredData: %s (address: %p)\n", 
+           is_aligned(filteredData, 64) ? "64-byte aligned ✓" : "NOT 64-byte aligned ✗",
+           (void*)filteredData);
+    printf("\n");
+    
+    // Initialize data
     for (size_t i = 0; i < dataSize; ++i) {
-        rawData[i].phaseAngle = dataset[i];
+        rawData[i].phaseAngle = (float)dataset[i];
         filteredData[i].phaseAngle = 0.0f;
     }
 
+    // Print working directory
     char cwd[1024];
-    _getcwd(cwd, sizeof(cwd));
-    printf("Working directory: %s\n", cwd);
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Working directory: %s\n", cwd);
+    }
 
-    // Set filter parameters.
+    // Set filter parameters
     uint8_t halfWindowSize = 12;
     uint8_t polynomialOrder = 4;
     uint8_t targetPoint = 0;
     uint8_t derivativeOrder = 0;
-  
-    clock_t tic = clock();
-    SavitzkyGolayFilter *filter = mes_savgolFilter(rawData, dataSize, halfWindowSize, filteredData, polynomialOrder, targetPoint, derivativeOrder);
-    clock_t toc = clock();
-
-    printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
-    printDataToFile(filteredData, dataSize, "filtered_output.txt");
     
+    printf("\nFilter Parameters:\n");
+    printf("  Window size: %d (halfWindow = %d)\n", 2*halfWindowSize+1, halfWindowSize);
+    printf("  Polynomial order: %d\n", polynomialOrder);
+    printf("  Target point: %d\n", targetPoint);
+    printf("  Derivative order: %d\n", derivativeOrder);
+    printf("  Data size: %zu\n\n", dataSize);
+  
+    // Run the filter
+    printf("Running Savitzky-Golay filter...\n");
+    clock_t tic = clock();
+    
+    int result = mes_savgolFilter(rawData, dataSize, halfWindowSize, 
+                                  filteredData, polynomialOrder, 
+                                  targetPoint, derivativeOrder);
+    
+    clock_t toc = clock();
+    
+    if (result != 0) {
+        fprintf(stderr, "ERROR: Filter returned error code %d\n", result);
+        free_aligned_data(rawData);
+        free_aligned_data(filteredData);
+        return result;
+    }
+
+    double elapsed = (double)(toc - tic) / CLOCKS_PER_SEC;
+    printf("Filter completed successfully!\n");
+    printf("Elapsed time: %.6f seconds\n", elapsed);
+    printf("Throughput: %.2f samples/sec\n\n", dataSize / elapsed);
+    
+    // Write output
+    printf("Writing filtered data to 'filtered_output.txt'...\n");
+    printDataToFile(filteredData, dataSize, "filtered_output.txt");
+    printf("Done!\n");
+    
+    // Cleanup
+    free_aligned_data(rawData);
+    free_aligned_data(filteredData);
 
     return 0;
 }
 
 int main(int argc, char **argv) {
-    //printf("Running application...\n");
-    runApplication();
-
-    //while(1);
-    return 0;
+    printf("=================================================\n");
+    printf("  SIMD Savitzky-Golay Filter Test (Aligned)\n");
+    printf("=================================================\n\n");
+    
+    int result = runApplication();
+    
+    printf("\n=================================================\n");
+    if (result == 0) {
+        printf("  Test PASSED\n");
+    } else {
+        printf("  Test FAILED (error code: %d)\n", result);
+    }
+    printf("=================================================\n");
+    
+    return result;
 }

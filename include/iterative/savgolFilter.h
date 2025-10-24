@@ -100,21 +100,6 @@ _Static_assert(offsetof(SavGolState, tempWindow) % 64 == 0, "tempWindow must be 
 extern "C" {
 #endif
 
-/**
- * @brief Original Savitzky-Golay filter implementation (scalar 4-chain)
- * 
- * @param data Input data array
- * @param dataSize Number of data points
- * @param halfWindowSize Half-window size (window = 2*halfWindowSize + 1)
- * @param filteredData Output filtered data array
- * @param polynomialOrder Polynomial order for fitting
- * @param targetPoint Target point within window
- * @param derivativeOrder Derivative order (0 = smoothing)
- * @return Pointer to filter structure or NULL on error
- */
-SavitzkyGolayFilter* mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
-                                      MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
-                                      uint8_t targetPoint, uint8_t derivativeOrder);
 
 /**
  * @brief Vectorized Savitzky-Golay filter (AVX-512/AVX2/SSE2/Scalar dispatch)
@@ -135,9 +120,9 @@ SavitzkyGolayFilter* mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize,
  * @param derivativeOrder Derivative order (0 = smoothing)
  * @return 0 on success, negative on error
  */
-int mes_savgolFilter_vectorized(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
-                                MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
-                                uint8_t targetPoint, uint8_t derivativeOrder);
+int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+                     MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
+                     uint8_t targetPoint, uint8_t derivativeOrder);
 
 /**
  * @brief Initialize filter structure with configuration
