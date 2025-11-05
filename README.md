@@ -255,7 +255,7 @@ Potential extensions for specialized use cases:
 
 ## License
 
-[Specify your license here]
+MIT License
 
 ## Citation
 
@@ -272,4 +272,4 @@ If you use this implementation in your research, please cite:
 
 ---
 
-*For detailed implementation notes, see the extensive inline documentation in `savgol_filter_optimized.c`*
+*For detailed implementation notes, see the extensive inline documentation in `src/savgolFilter.c`*
