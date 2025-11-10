@@ -5,16 +5,8 @@
  * This header declares the data structures, constants, and functions used in
  * a Savitzky–Golay filtering algorithm for smoothing and derivative estimation.
  *
- * The implementation includes:
- * - Gram polynomial evaluation (iterative method).
- * - Weight calculation based on Gram polynomials.
- * - An optional optimized precomputation for generalized factorial (GenFact) calculations.
- * - A complete filter application function with edge‐handling.
- *
- * @author
- * Tugbars Heptaskin
- * @date
- * 2025-02-01
+ * @author Tugbars Heptaskin
+ * @date 2025-11-10
  */
 
 #ifndef SAVGOL_FILTER_H
@@ -37,9 +29,6 @@
 #define OPTIMIZE_GENFACT
 
 #define MAX_ORDER 5
-
-/// Uncomment the following line to build with a test main
-// #define TEST_MAIN
 
 //-------------------------
 // Data Type Definitions
@@ -122,10 +111,40 @@ extern "C"
      * @param polynomialOrder Order of the polynomial used for fitting.
      * @param targetPoint  The target point in the filter window.
      * @param derivativeOrder Order of the derivative (0 for smoothing).
+     * @return 0 on success, negative error code on failure.
      */
     int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
                          MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
                          uint8_t targetPoint, uint8_t derivativeOrder);
+
+#ifdef SAVGOL_PARALLEL_BUILD
+    /**
+     * @brief Applies the Savitzky–Golay filter with explicit thread count control.
+     *
+     * This function is only available when building with OpenMP support (parallel version).
+     * It provides fine-grained control over the number of threads used for filtering.
+     *
+     * @param data         Array of raw data points (input).
+     * @param dataSize     Number of data points in the array.
+     * @param halfWindowSize Half-window size (filter window size = 2*halfWindowSize+1).
+     * @param filteredData Array to store the filtered data points (output).
+     * @param polynomialOrder Order of the polynomial used for fitting.
+     * @param targetPoint  The target point in the filter window.
+     * @param derivativeOrder Order of the derivative (0 for smoothing).
+     * @param numThreads   Number of threads to use:
+     *                     - 0: Auto-detect (use all available cores)
+     *                     - -1: Force sequential execution (single-threaded)
+     *                     - >0: Use exactly this many threads
+     * @return 0 on success, negative error code on failure.
+     *
+     * @note This function is only available in the parallel build (USE_PARALLEL_SAVGOL=ON).
+     * @note If OpenMP is not available at runtime, this function will execute sequentially
+     *       regardless of the numThreads parameter.
+     */
+    int mes_savgolFilter_threaded(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+                                  MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
+                                  uint8_t targetPoint, uint8_t derivativeOrder, int numThreads);
+#endif // SAVGOL_PARALLEL_BUILD
 
     /**
      * @brief Initializes a Savitzky–Golay filter instance.
@@ -142,11 +161,15 @@ extern "C"
     SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint,
                                    uint8_t derivativeOrder, float time_step);
 
+    /**
+     * @brief Retrieves a Gram polynomial cache entry (for testing/debugging).
+     *
+     * @param shiftedIndex Data index shifted to non-negative range [0, 2n].
+     * @param polyOrder Polynomial order k.
+     * @param derivOrder Derivative order d.
+     * @return Pointer to cache entry, or NULL if indices out of bounds.
+     */
     const GramPolyCacheEntry *GetGramPolyCacheEntry(int shiftedIndex, uint8_t polyOrder, uint8_t derivOrder);
-
-    int mes_savgolFilter_threaded(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
-                              MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
-                              uint8_t targetPoint, uint8_t derivativeOrder, int numThreads);
 
 #ifdef __cplusplus
 }
