@@ -144,6 +144,10 @@ extern "C"
 
     const GramPolyCacheEntry *GetGramPolyCacheEntry(int shiftedIndex, uint8_t polyOrder, uint8_t derivOrder);
 
+    int mes_savgolFilter_threaded(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
+                              MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
+                              uint8_t targetPoint, uint8_t derivativeOrder, int numThreads);
+
 #ifdef __cplusplus
 }
 #endif
