@@ -42,6 +42,11 @@
 
 #define ENABLE_MEMOIZATION
 
+// Weight computation parallelization threshold
+// Parallelize ComputeWeights if fullWindowSize > this value
+// Each weight computation: ~100 FLOPs, need 20+ to overcome threading overhead
+#define WEIGHT_PARALLEL_THRESHOLD 20
+
 //=============================================================================
 // THREAD-SAFE INITIALIZATION FLAGS
 //=============================================================================
@@ -185,13 +190,12 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
 // Memoization
 //=============================================================================
 #ifdef ENABLE_MEMOIZATION
-#define MAX_HALF_WINDOW_FOR_MEMO 32
 #define MAX_POLY_ORDER_FOR_MEMO 5
 #define MAX_DERIVATIVE_FOR_MEMO 5
 
-static GramPolyCacheEntry gramPolyCache[2 * MAX_HALF_WINDOW_FOR_MEMO + 1]
-                                       [MAX_POLY_ORDER_FOR_MEMO]
-                                       [MAX_DERIVATIVE_FOR_MEMO];
+static GramPolyCacheEntry gramPolyCache[2 * MAX_WINDOW + 1]
+                                       [MAX_WINDOW]
+                                       [MAX_WINDOW];
 
 static void ClearGramPolyCache(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t derivativeOrder)
 {
@@ -212,7 +216,7 @@ static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const Gram
 {
     int shiftedIndex = dataIndex + ctx->halfWindowSize;
 
-    if (shiftedIndex < 0 || shiftedIndex >= (2 * MAX_HALF_WINDOW_FOR_MEMO + 1))
+    if (shiftedIndex < 0 || shiftedIndex >= (2 * MAX_WINDOW + 1))
     {
         return GramPolyIterative(polynomialOrder, dataIndex, ctx);
     }
@@ -263,19 +267,137 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
     return w;
 }
 
-static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, uint8_t polynomialOrder,
-                           uint8_t derivativeOrder, float *weights)
+//=============================================================================
+// OPTIMIZED: Parallel Weight Calculation
+//=============================================================================
+/**
+ * @brief Compute all weights for the filter with optional parallelization
+ * 
+ * PARALLELIZATION STRATEGY:
+ * - Each weight computation is independent (no data dependencies)
+ * - Parallelize for windows > 20 points (overhead vs benefit threshold)
+ * - Each thread needs its own memoization cache to avoid race conditions
+ * 
+ * THREAD-LOCAL CACHING:
+ * - OpenMP threads use thread-local Gram polynomial caches
+ * - Avoids false sharing and race conditions
+ * - No critical sections needed (each thread writes to different memory)
+ */
+static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, 
+                          uint8_t polynomialOrder, uint8_t derivativeOrder, 
+                          float *weights)
 {
     GramPolyContext ctx = {halfWindowSize, targetPoint, derivativeOrder};
     uint16_t fullWindowSize = 2 * halfWindowSize + 1;
 
 #ifdef ENABLE_MEMOIZATION
+    // Clear global cache (used by sequential path and thread 0)
     ClearGramPolyCache(halfWindowSize, polynomialOrder, derivativeOrder);
 #endif
 
-    for (int dataIndex = 0; dataIndex < fullWindowSize; ++dataIndex)
+    // OPTIMIZATION: Parallelize weight computation for large windows
+    // Threshold: 20 weights = ~2000 FLOPs, enough to justify threading
+#ifdef _OPENMP
+    if (fullWindowSize > WEIGHT_PARALLEL_THRESHOLD)
     {
-        weights[dataIndex] = Weight(dataIndex - halfWindowSize, targetPoint, polynomialOrder, &ctx);
+        // Parallel path: each thread computes subset of weights
+        #pragma omp parallel for schedule(static)
+        for (int dataIndex = 0; dataIndex < fullWindowSize; ++dataIndex)
+        {
+            // Each thread uses its own cache to avoid race conditions
+            #ifdef ENABLE_MEMOIZATION
+            // Thread-local cache (automatic variable, one per thread)
+            static _Thread_local GramPolyCacheEntry threadCache[2 * MAX_WINDOW + 1]
+                                                                [MAX_ORDER]
+                                                                [MAX_ORDER];
+            static _Thread_local bool threadCacheInitialized = false;
+            
+            // Initialize thread-local cache on first use
+            if (!threadCacheInitialized) {
+                int maxIndex = 2 * halfWindowSize + 1;
+                for (int i = 0; i < maxIndex; i++) {
+                    for (int k = 0; k <= polynomialOrder; k++) {
+                        for (int d = 0; d <= derivativeOrder; d++) {
+                            threadCache[i][k][d].isComputed = false;
+                        }
+                    }
+                }
+                threadCacheInitialized = true;
+            }
+            #endif
+            
+            // Compute weight using thread-local cache
+            float w = 0.0f;
+            uint8_t twoM = 2 * ctx.halfWindowSize;
+            
+            for (uint8_t k = 0; k <= polynomialOrder; ++k)
+            {
+                #ifdef ENABLE_MEMOIZATION
+                // Use thread-local memoization
+                int shiftedDataIndex = (dataIndex - halfWindowSize) + ctx.halfWindowSize;
+                int shiftedTarget = targetPoint + ctx.halfWindowSize;
+                
+                float part1, part2;
+                
+                // Check thread-local cache for part1
+                if (shiftedDataIndex >= 0 && shiftedDataIndex < (2 * MAX_WINDOW + 1) &&
+                    k < MAX_POLY_ORDER_FOR_MEMO && ctx.derivativeOrder < MAX_DERIVATIVE_FOR_MEMO &&
+                    threadCache[shiftedDataIndex][k][ctx.derivativeOrder].isComputed)
+                {
+                    part1 = threadCache[shiftedDataIndex][k][ctx.derivativeOrder].value;
+                }
+                else
+                {
+                    part1 = GramPolyIterative(k, dataIndex - halfWindowSize, &ctx);
+                    if (shiftedDataIndex >= 0 && shiftedDataIndex < (2 * MAX_WINDOW + 1) &&
+                        k < MAX_POLY_ORDER_FOR_MEMO && ctx.derivativeOrder < MAX_DERIVATIVE_FOR_MEMO)
+                    {
+                        threadCache[shiftedDataIndex][k][ctx.derivativeOrder].value = part1;
+                        threadCache[shiftedDataIndex][k][ctx.derivativeOrder].isComputed = true;
+                    }
+                }
+                
+                // Check thread-local cache for part2
+                if (shiftedTarget >= 0 && shiftedTarget < (2 * MAX_WINDOW + 1) &&
+                    k < MAX_POLY_ORDER_FOR_MEMO && ctx.derivativeOrder < MAX_DERIVATIVE_FOR_MEMO &&
+                    threadCache[shiftedTarget][k][ctx.derivativeOrder].isComputed)
+                {
+                    part2 = threadCache[shiftedTarget][k][ctx.derivativeOrder].value;
+                }
+                else
+                {
+                    part2 = GramPolyIterative(k, targetPoint, &ctx);
+                    if (shiftedTarget >= 0 && shiftedTarget < (2 * MAX_WINDOW + 1) &&
+                        k < MAX_POLY_ORDER_FOR_MEMO && ctx.derivativeOrder < MAX_DERIVATIVE_FOR_MEMO)
+                    {
+                        threadCache[shiftedTarget][k][ctx.derivativeOrder].value = part2;
+                        threadCache[shiftedTarget][k][ctx.derivativeOrder].isComputed = true;
+                    }
+                }
+                #else
+                float part1 = GramPolyIterative(k, dataIndex - halfWindowSize, &ctx);
+                float part2 = GramPolyIterative(k, targetPoint, &ctx);
+                #endif
+
+                float num = GenFact(twoM, k);
+                float den = GenFact(twoM + k + 1, k + 1);
+                float factor = (2 * k + 1) * (num / den);
+
+                w += factor * part1 * part2;
+            }
+            
+            weights[dataIndex] = w;
+        }
+    }
+    else
+#endif
+    {
+        // Sequential path: use global cache
+        for (int dataIndex = 0; dataIndex < fullWindowSize; ++dataIndex)
+        {
+            weights[dataIndex] = Weight(dataIndex - halfWindowSize, targetPoint, 
+                                       polynomialOrder, &ctx);
+        }
     }
 }
 
@@ -292,7 +414,7 @@ typedef struct
     bool valid;
 } EdgeWeightCache;
 
-static EdgeWeightCache leadingEdgeCache[MAX_HALF_WINDOW_FOR_MEMO];
+static EdgeWeightCache leadingEdgeCache[MAX_WINDOW];
 
 /**
  * @brief FIXED: Thread-safe edge cache initialization with relaxed fast path
@@ -313,7 +435,7 @@ static void InitEdgeCacheIfNeeded(void)
         // Double-check with acquire (needed inside critical section)
         if (!atomic_load_explicit(&edgeCacheInitialized, memory_order_acquire))
         {
-            for (int i = 0; i < MAX_HALF_WINDOW_FOR_MEMO; i++)
+            for (int i = 0; i < MAX_WINDOW; i++)
             {
                 leadingEdgeCache[i].valid = false;
             }
@@ -506,7 +628,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
 #pragma omp critical(EdgeCacheAccess)
 #endif
             {
-                if (i < MAX_HALF_WINDOW_FOR_MEMO && leadingEdgeCache[i].valid &&
+                if (i < MAX_WINDOW && leadingEdgeCache[i].valid &&
                     leadingEdgeCache[i].halfWindowSize == halfWindowSize &&
                     leadingEdgeCache[i].polynomialOrder == filter.conf.polynomialOrder &&
                     leadingEdgeCache[i].derivativeOrder == filter.conf.derivativeOrder &&
@@ -527,7 +649,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
                 edgeWeights = tempWeights;
 
                 // Update cache (protected write)
-                if (i < MAX_HALF_WINDOW_FOR_MEMO)
+                if (i < MAX_WINDOW)
                 {
 #ifdef _OPENMP
 #pragma omp critical(EdgeCacheUpdate)
@@ -645,7 +767,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
             float tempWeights[MAX_WINDOW];
             bool useCache = false;
 
-            if (i < MAX_HALF_WINDOW_FOR_MEMO && leadingEdgeCache[i].valid)
+            if (i < MAX_WINDOW && leadingEdgeCache[i].valid)
             {
                 if (leadingEdgeCache[i].halfWindowSize == halfWindowSize &&
                     leadingEdgeCache[i].polynomialOrder == filter.conf.polynomialOrder &&
@@ -668,7 +790,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
                 edgeWeights = tempWeights;
 
                 // Cache update
-                if (i < MAX_HALF_WINDOW_FOR_MEMO)
+                if (i < MAX_WINDOW)
                 {
                     memcpy(leadingEdgeCache[i].weights, tempWeights, windowSize * sizeof(float));
                     leadingEdgeCache[i].halfWindowSize = halfWindowSize;

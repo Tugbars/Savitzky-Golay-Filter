@@ -21,9 +21,7 @@
 //-------------------------
 
 /// Maximum window size for the filter (must be an odd number)
-#define MAX_WINDOW 33
-
-#define MAX_DERIVATIVE_FOR_MEMO 5
+#define MAX_WINDOW 97
 
 /// Define to use the optimized version of GenFact (precomputed values)
 #define OPTIMIZE_GENFACT
@@ -170,6 +168,22 @@ extern "C"
      * @return Pointer to cache entry, or NULL if indices out of bounds.
      */
     const GramPolyCacheEntry *GetGramPolyCacheEntry(int shiftedIndex, uint8_t polyOrder, uint8_t derivOrder);
+
+    /**
+     * @brief Convenience macro for calling filter with optimal threading.
+     *
+     * Automatically uses threaded version if available, falls back to sequential.
+     *
+     * Example:
+     *   SAVGOL_FILTER_AUTO(data, 1000, 5, filtered, 2, 0, 0, 4);
+     */
+#ifdef SAVGOL_PARALLEL_BUILD
+#define SAVGOL_FILTER_AUTO(data, dataSize, halfWin, filtered, polyOrder, target, deriv, threads) \
+    mes_savgolFilter_threaded(data, dataSize, halfWin, filtered, polyOrder, target, deriv, threads)
+#else
+#define SAVGOL_FILTER_AUTO(data, dataSize, halfWin, filtered, polyOrder, target, deriv, threads) \
+    mes_savgolFilter(data, dataSize, halfWin, filtered, polyOrder, target, deriv)
+#endif
 
 #ifdef __cplusplus
 }

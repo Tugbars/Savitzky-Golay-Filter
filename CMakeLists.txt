@@ -10,6 +10,18 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# =============================================================================
+# BUILD OPTIONS
+# =============================================================================
+option(USE_PARALLEL_SAVGOL "Build parallel (OpenMP) version of Savitzky-Golay filter" ON)
+
+# Print selected build mode
+if(USE_PARALLEL_SAVGOL)
+    message(STATUS "Building PARALLEL Savitzky-Golay implementation (with OpenMP)")
+else()
+    message(STATUS "Building SEQUENTIAL Savitzky-Golay implementation")
+endif()
+
 # Ensure Cygwin runtime linkage for all targets
 if (CYGWIN)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lc -lcygwin")
@@ -34,8 +46,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(fff)
 
-# Include subdirectories
-add_subdirectory(src/iterative)
+# =============================================================================
+# INCLUDE SUBDIRECTORIES
+# =============================================================================
+# Conditionally include the appropriate implementation
+if(USE_PARALLEL_SAVGOL)
+    add_subdirectory(src/parallel)
+else()
+    add_subdirectory(src/iterative)
+endif()
+
+# Always include tests (they should work with either implementation)
 add_subdirectory(test/iterative)
 
 # Enable testing
