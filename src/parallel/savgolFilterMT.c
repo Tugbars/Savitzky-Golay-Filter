@@ -1,15 +1,19 @@
 /**
  * @file savgolFilterMT.c
- * @brief CORRECTED Savitzky-Golay filter with OpenMP parallelization
+ * @brief Production Savitzky-Golay filter with OpenMP parallelization
  *
- * FIXES APPLIED:
- * 1. All #pragma omp directives guarded with #ifdef _OPENMP
- * 2. InitEdgeCacheIfNeeded() fully implemented
- * 3. Removed static weights[] to eliminate false sharing
- * 4. Increased PARALLEL_THRESHOLD to 1000 (realistic overhead)
- * 5. Added optional edge parallelization for large windows
- * 6. Added thread count control API
- * 7. Removed default(none) clause
+ * FEATURES:
+ * 1. Thread-safe weight computation with proper cache invalidation
+ * 2. Parallel central region, edge processing, and weight computation
+ * 3. No false sharing (thread-local caches)
+ * 4. Adaptive thresholds for optimal parallelization decisions
+ * 5. Thread count control API
+ *
+ * FIXES FROM PREVIOUS VERSION:
+ * - Fixed thread-local cache invalidation on parameter changes
+ * - Fixed global cache race condition (now uses thread-local caches)
+ * - Fixed gramPolyCache array dimensions (was wasting 292 KB)
+ * - Added WEIGHT_PARALLEL_THRESHOLD configuration
  */
 
 #include "savgolFilter.h"
@@ -32,20 +36,20 @@
 -------------------------*/
 #define LOG_ERROR(fmt, ...) fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
 
-// CORRECTED: Increased threshold based on realistic OpenMP overhead
+// Central region parallelization threshold
 // OpenMP fork-join overhead: ~50-100µs
-// Only worth parallelizing if work > 10x overhead
+// Only parallelize if work > 10x overhead
 #define PARALLEL_THRESHOLD 1000
 
 // Edge parallelization threshold (only parallel if halfWindow is large)
 #define EDGE_PARALLEL_THRESHOLD 8
 
-#define ENABLE_MEMOIZATION
-
 // Weight computation parallelization threshold
 // Parallelize ComputeWeights if fullWindowSize > this value
 // Each weight computation: ~100 FLOPs, need 20+ to overcome threading overhead
 #define WEIGHT_PARALLEL_THRESHOLD 20
+
+#define ENABLE_MEMOIZATION
 
 //=============================================================================
 // THREAD-SAFE INITIALIZATION FLAGS
@@ -187,60 +191,7 @@ static float GramPolyIterative(uint8_t polynomialOrder, int dataIndex, const Gra
 }
 
 //=============================================================================
-// Memoization
-//=============================================================================
-#ifdef ENABLE_MEMOIZATION
-#define MAX_POLY_ORDER_FOR_MEMO 5
-#define MAX_DERIVATIVE_FOR_MEMO 5
-
-static GramPolyCacheEntry gramPolyCache[2 * MAX_WINDOW + 1]
-                                       [MAX_WINDOW]
-                                       [MAX_WINDOW];
-
-static void ClearGramPolyCache(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t derivativeOrder)
-{
-    int maxIndex = 2 * halfWindowSize + 1;
-    for (int i = 0; i < maxIndex; i++)
-    {
-        for (int k = 0; k <= polynomialOrder; k++)
-        {
-            for (int d = 0; d <= derivativeOrder; d++)
-            {
-                gramPolyCache[i][k][d].isComputed = false;
-            }
-        }
-    }
-}
-
-static float MemoizedGramPoly(uint8_t polynomialOrder, int dataIndex, const GramPolyContext *ctx)
-{
-    int shiftedIndex = dataIndex + ctx->halfWindowSize;
-
-    if (shiftedIndex < 0 || shiftedIndex >= (2 * MAX_WINDOW + 1))
-    {
-        return GramPolyIterative(polynomialOrder, dataIndex, ctx);
-    }
-
-    if (polynomialOrder >= MAX_POLY_ORDER_FOR_MEMO || ctx->derivativeOrder >= MAX_DERIVATIVE_FOR_MEMO)
-    {
-        return GramPolyIterative(polynomialOrder, dataIndex, ctx);
-    }
-
-    if (gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].isComputed)
-    {
-        return gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].value;
-    }
-
-    float value = GramPolyIterative(polynomialOrder, dataIndex, ctx);
-    gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].value = value;
-    gramPolyCache[shiftedIndex][polynomialOrder][ctx->derivativeOrder].isComputed = true;
-
-    return value;
-}
-#endif
-
-//=============================================================================
-// Weight Calculation
+// Weight Calculation (Non-Memoized)
 //=============================================================================
 static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, const GramPolyContext *ctx)
 {
@@ -249,13 +200,8 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
 
     for (uint8_t k = 0; k <= polynomialOrder; ++k)
     {
-#ifdef ENABLE_MEMOIZATION
-        float part1 = MemoizedGramPoly(k, dataIndex, ctx);
-        float part2 = MemoizedGramPoly(k, targetPoint, ctx);
-#else
         float part1 = GramPolyIterative(k, dataIndex, ctx);
         float part2 = GramPolyIterative(k, targetPoint, ctx);
-#endif
 
         float num = GenFact(twoM, k);
         float den = GenFact(twoM + k + 1, k + 1);
@@ -268,80 +214,93 @@ static float Weight(int dataIndex, int targetPoint, uint8_t polynomialOrder, con
 }
 
 //=============================================================================
-// OPTIMIZED: Parallel Weight Calculation
+// OPTIMIZED: Parallel Weight Calculation with Thread-Local Memoization
 //=============================================================================
 /**
  * @brief Compute all weights for the filter with optional parallelization
- * 
+ *
  * PARALLELIZATION STRATEGY:
  * - Each weight computation is independent (no data dependencies)
  * - Parallelize for windows > 20 points (overhead vs benefit threshold)
- * - Each thread needs its own memoization cache to avoid race conditions
- * 
+ * - Each thread uses its own memoization cache to avoid race conditions
+ *
  * THREAD-LOCAL CACHING:
  * - OpenMP threads use thread-local Gram polynomial caches
+ * - Cache is invalidated when filter parameters change
  * - Avoids false sharing and race conditions
  * - No critical sections needed (each thread writes to different memory)
  */
-static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint, 
-                          uint8_t polynomialOrder, uint8_t derivativeOrder, 
-                          float *weights)
+static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint,
+                           uint8_t polynomialOrder, uint8_t derivativeOrder,
+                           float *weights)
 {
     GramPolyContext ctx = {halfWindowSize, targetPoint, derivativeOrder};
     uint16_t fullWindowSize = 2 * halfWindowSize + 1;
 
-#ifdef ENABLE_MEMOIZATION
-    // Clear global cache (used by sequential path and thread 0)
-    ClearGramPolyCache(halfWindowSize, polynomialOrder, derivativeOrder);
-#endif
-
     // OPTIMIZATION: Parallelize weight computation for large windows
-    // Threshold: 20 weights = ~2000 FLOPs, enough to justify threading
 #ifdef _OPENMP
     if (fullWindowSize > WEIGHT_PARALLEL_THRESHOLD)
     {
-        // Parallel path: each thread computes subset of weights
-        #pragma omp parallel for schedule(static)
+// Parallel path: each thread computes subset of weights
+#pragma omp parallel for schedule(static)
         for (int dataIndex = 0; dataIndex < fullWindowSize; ++dataIndex)
         {
-            // Each thread uses its own cache to avoid race conditions
-            #ifdef ENABLE_MEMOIZATION
-            // Thread-local cache (automatic variable, one per thread)
+#ifdef ENABLE_MEMOIZATION
+            // Thread-local cache (one per thread, persists across parallel regions)
             static _Thread_local GramPolyCacheEntry threadCache[2 * MAX_WINDOW + 1]
-                                                                [MAX_ORDER]
-                                                                [MAX_ORDER];
-            static _Thread_local bool threadCacheInitialized = false;
-            
-            // Initialize thread-local cache on first use
-            if (!threadCacheInitialized) {
+                                                               [MAX_ORDER]
+                                                               [MAX_ORDER];
+
+            // Track parameters to detect changes (forces cache invalidation)
+            static _Thread_local uint8_t cachedHalfWindowSize = 0xFF;
+            static _Thread_local uint8_t cachedPolynomialOrder = 0xFF;
+            static _Thread_local uint8_t cachedDerivativeOrder = 0xFF;
+
+            // FIXED: Clear cache if parameters changed
+            if (cachedHalfWindowSize != halfWindowSize ||
+                cachedPolynomialOrder != polynomialOrder ||
+                cachedDerivativeOrder != derivativeOrder)
+            {
                 int maxIndex = 2 * halfWindowSize + 1;
-                for (int i = 0; i < maxIndex; i++) {
-                    for (int k = 0; k <= polynomialOrder; k++) {
-                        for (int d = 0; d <= derivativeOrder; d++) {
+                if (maxIndex > (2 * MAX_WINDOW + 1))
+                    maxIndex = (2 * MAX_WINDOW + 1);
+
+                for (int i = 0; i < maxIndex; i++)
+                {
+                    int maxK = (polynomialOrder < MAX_ORDER) ? polynomialOrder : MAX_ORDER - 1;
+                    int maxD = (derivativeOrder < MAX_ORDER) ? derivativeOrder : MAX_ORDER - 1;
+
+                    for (int k = 0; k <= maxK; k++)
+                    {
+                        for (int d = 0; d <= maxD; d++)
+                        {
                             threadCache[i][k][d].isComputed = false;
                         }
                     }
                 }
-                threadCacheInitialized = true;
+
+                cachedHalfWindowSize = halfWindowSize;
+                cachedPolynomialOrder = polynomialOrder;
+                cachedDerivativeOrder = derivativeOrder;
             }
-            #endif
-            
+#endif
+
             // Compute weight using thread-local cache
             float w = 0.0f;
             uint8_t twoM = 2 * ctx.halfWindowSize;
-            
+
             for (uint8_t k = 0; k <= polynomialOrder; ++k)
             {
-                #ifdef ENABLE_MEMOIZATION
+#ifdef ENABLE_MEMOIZATION
                 // Use thread-local memoization
                 int shiftedDataIndex = (dataIndex - halfWindowSize) + ctx.halfWindowSize;
                 int shiftedTarget = targetPoint + ctx.halfWindowSize;
-                
+
                 float part1, part2;
-                
+
                 // Check thread-local cache for part1
                 if (shiftedDataIndex >= 0 && shiftedDataIndex < (2 * MAX_WINDOW + 1) &&
-                    k < MAX_POLY_ORDER_FOR_MEMO && ctx.derivativeOrder < MAX_DERIVATIVE_FOR_MEMO &&
+                    k < MAX_ORDER && ctx.derivativeOrder < MAX_ORDER &&
                     threadCache[shiftedDataIndex][k][ctx.derivativeOrder].isComputed)
                 {
                     part1 = threadCache[shiftedDataIndex][k][ctx.derivativeOrder].value;
@@ -350,16 +309,16 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint,
                 {
                     part1 = GramPolyIterative(k, dataIndex - halfWindowSize, &ctx);
                     if (shiftedDataIndex >= 0 && shiftedDataIndex < (2 * MAX_WINDOW + 1) &&
-                        k < MAX_POLY_ORDER_FOR_MEMO && ctx.derivativeOrder < MAX_DERIVATIVE_FOR_MEMO)
+                        k < MAX_ORDER && ctx.derivativeOrder < MAX_ORDER)
                     {
                         threadCache[shiftedDataIndex][k][ctx.derivativeOrder].value = part1;
                         threadCache[shiftedDataIndex][k][ctx.derivativeOrder].isComputed = true;
                     }
                 }
-                
+
                 // Check thread-local cache for part2
                 if (shiftedTarget >= 0 && shiftedTarget < (2 * MAX_WINDOW + 1) &&
-                    k < MAX_POLY_ORDER_FOR_MEMO && ctx.derivativeOrder < MAX_DERIVATIVE_FOR_MEMO &&
+                    k < MAX_ORDER && ctx.derivativeOrder < MAX_ORDER &&
                     threadCache[shiftedTarget][k][ctx.derivativeOrder].isComputed)
                 {
                     part2 = threadCache[shiftedTarget][k][ctx.derivativeOrder].value;
@@ -368,16 +327,16 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint,
                 {
                     part2 = GramPolyIterative(k, targetPoint, &ctx);
                     if (shiftedTarget >= 0 && shiftedTarget < (2 * MAX_WINDOW + 1) &&
-                        k < MAX_POLY_ORDER_FOR_MEMO && ctx.derivativeOrder < MAX_DERIVATIVE_FOR_MEMO)
+                        k < MAX_ORDER && ctx.derivativeOrder < MAX_ORDER)
                     {
                         threadCache[shiftedTarget][k][ctx.derivativeOrder].value = part2;
                         threadCache[shiftedTarget][k][ctx.derivativeOrder].isComputed = true;
                     }
                 }
-                #else
+#else
                 float part1 = GramPolyIterative(k, dataIndex - halfWindowSize, &ctx);
                 float part2 = GramPolyIterative(k, targetPoint, &ctx);
-                #endif
+#endif
 
                 float num = GenFact(twoM, k);
                 float den = GenFact(twoM + k + 1, k + 1);
@@ -385,18 +344,18 @@ static void ComputeWeights(uint8_t halfWindowSize, uint16_t targetPoint,
 
                 w += factor * part1 * part2;
             }
-            
+
             weights[dataIndex] = w;
         }
     }
     else
 #endif
     {
-        // Sequential path: use global cache
+        // Sequential path: no memoization (simpler, less overhead for small windows)
         for (int dataIndex = 0; dataIndex < fullWindowSize; ++dataIndex)
         {
-            weights[dataIndex] = Weight(dataIndex - halfWindowSize, targetPoint, 
-                                       polynomialOrder, &ctx);
+            weights[dataIndex] = Weight(dataIndex - halfWindowSize, targetPoint,
+                                        polynomialOrder, &ctx);
         }
     }
 }
@@ -417,22 +376,19 @@ typedef struct
 static EdgeWeightCache leadingEdgeCache[MAX_WINDOW];
 
 /**
- * @brief FIXED: Thread-safe edge cache initialization with relaxed fast path
+ * @brief Thread-safe edge cache initialization
  */
 static void InitEdgeCacheIfNeeded(void)
 {
-    // Fast path: relaxed ordering for quick check
     if (atomic_load_explicit(&edgeCacheInitialized, memory_order_relaxed))
     {
         return;
     }
 
-    // Slow path: full synchronization
 #ifdef _OPENMP
 #pragma omp critical(EdgeCacheInit)
 #endif
     {
-        // Double-check with acquire (needed inside critical section)
         if (!atomic_load_explicit(&edgeCacheInitialized, memory_order_acquire))
         {
             for (int i = 0; i < MAX_WINDOW; i++)
@@ -462,7 +418,7 @@ SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder,
 }
 
 //=============================================================================
-// CORRECTED: Parallel Filter Application
+// Parallel Filter Application
 //=============================================================================
 static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
                         uint16_t targetPoint, SavitzkyGolayFilter filter,
@@ -480,12 +436,11 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     int lastIndex = dataSize - 1;
     uint8_t width = halfWindowSize;
 
-    // CORRECTED: Stack allocation instead of static (eliminates false sharing)
-    // Each thread in parallel region gets its own copy
+    // Stack allocation (eliminates false sharing)
     float weights[MAX_WINDOW];
 
     //--------------------------------------------------------------------------
-    // STEP 1: Compute central weights (sequential, shared by all threads)
+    // STEP 1: Compute central weights (may be parallelized internally)
     //--------------------------------------------------------------------------
     ComputeWeights(halfWindowSize, targetPoint, filter.conf.polynomialOrder,
                    filter.conf.derivativeOrder, weights);
@@ -495,11 +450,9 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     //--------------------------------------------------------------------------
     int centralRegionSize = (int)dataSize - windowSize + 1;
 
-    // CORRECTED: All OpenMP directives wrapped in #ifdef
 #ifdef _OPENMP
     if (centralRegionSize >= PARALLEL_THRESHOLD)
     {
-// CORRECTED: Removed default(none) clause
 #pragma omp parallel for schedule(static)
         for (int i = 0; i < centralRegionSize; ++i)
         {
@@ -605,25 +558,22 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     }
 
     //--------------------------------------------------------------------------
-    // STEP 3: FIXED EDGE HANDLING (parallel for large windows)
+    // STEP 3: EDGE HANDLING (parallel for large windows)
     //--------------------------------------------------------------------------
     InitEdgeCacheIfNeeded();
 
 #ifdef _OPENMP
     if (width >= EDGE_PARALLEL_THRESHOLD)
     {
-// FIXED: Parallel edges with proper cache synchronization and static scheduling
 #pragma omp parallel for schedule(static)
         for (int i = 0; i < width; ++i)
         {
             uint8_t target = width - i;
 
-            // Thread-local buffer (only used on cache miss)
             float tempWeights[MAX_WINDOW];
-            const float *edgeWeights; // Pointer to actual weights (cached or temp)
+            const float *edgeWeights;
             bool usedCache = false;
 
-            // ---------- ATOMIC CACHE ACCESS (TOCTOU fix) ----------
 #ifdef _OPENMP
 #pragma omp critical(EdgeCacheAccess)
 #endif
@@ -634,21 +584,17 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
                     leadingEdgeCache[i].derivativeOrder == filter.conf.derivativeOrder &&
                     leadingEdgeCache[i].targetPoint == target)
                 {
-
-                    // FIXED: Use cached pointer directly (no memcpy)
                     edgeWeights = leadingEdgeCache[i].weights;
                     usedCache = true;
                 }
             }
 
-            // ---------- COMPUTE IF CACHE MISS ----------
             if (!usedCache)
             {
                 ComputeWeights(halfWindowSize, target, filter.conf.polynomialOrder,
                                filter.conf.derivativeOrder, tempWeights);
                 edgeWeights = tempWeights;
 
-                // Update cache (protected write)
                 if (i < MAX_WINDOW)
                 {
 #ifdef _OPENMP
@@ -665,7 +611,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
                 }
             }
 
-            // ---------- LEADING EDGE (reverse order) ----------
+            // Leading edge (reverse order)
             float leadSum0 = 0.0f, leadSum1 = 0.0f, leadSum2 = 0.0f, leadSum3 = 0.0f;
             const float *w_ptr = edgeWeights;
             const MqsRawDataPoint_t *d_ptr = &data[windowSize - 1];
@@ -710,7 +656,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
             float leadingSum = (leadSum0 + leadSum1) + (leadSum2 + leadSum3);
             filteredData[i].phaseAngle = leadingSum;
 
-            // ---------- TRAILING EDGE (forward order) ----------
+            // Trailing edge (forward order)
             float trailSum0 = 0.0f, trailSum1 = 0.0f, trailSum2 = 0.0f, trailSum3 = 0.0f;
             w_ptr = edgeWeights;
             d_ptr = &data[lastIndex - windowSize + 1];
@@ -757,12 +703,11 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
     else
 #endif
     {
-        // ---------- SEQUENTIAL EDGE PROCESSING ----------
+        // Sequential edge processing
         for (int i = 0; i < width; ++i)
         {
             uint8_t target = width - i;
 
-            // FIXED: Use pointer, avoid unnecessary memcpy
             const float *edgeWeights;
             float tempWeights[MAX_WINDOW];
             bool useCache = false;
@@ -780,7 +725,6 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
 
             if (useCache)
             {
-                // FIXED: Direct pointer (no copy)
                 edgeWeights = leadingEdgeCache[i].weights;
             }
             else
@@ -789,7 +733,6 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
                                filter.conf.derivativeOrder, tempWeights);
                 edgeWeights = tempWeights;
 
-                // Cache update
                 if (i < MAX_WINDOW)
                 {
                     memcpy(leadingEdgeCache[i].weights, tempWeights, windowSize * sizeof(float));
@@ -801,7 +744,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
                 }
             }
 
-            // Leading edge (same convolution code as parallel version)
+            // Leading edge
             float leadSum0 = 0.0f, leadSum1 = 0.0f, leadSum2 = 0.0f, leadSum3 = 0.0f;
             const float *w_ptr = edgeWeights;
             const MqsRawDataPoint_t *d_ptr = &data[windowSize - 1];
@@ -891,7 +834,7 @@ static void ApplyFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfW
 }
 
 //=============================================================================
-// PUBLIC API (with optional thread count control)
+// PUBLIC API
 //=============================================================================
 int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
                      MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
@@ -931,7 +874,7 @@ int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWind
 }
 
 /**
- * @brief CORRECTED: Added API with thread count control
+ * @brief API with thread count control
  *
  * @param numThreads Number of threads to use (0 = auto-detect, -1 = sequential)
  */
@@ -948,17 +891,16 @@ int mes_savgolFilter_threaded(MqsRawDataPoint_t data[], size_t dataSize, uint8_t
     }
     else if (numThreads == -1)
     {
-        omp_set_num_threads(1); // Force sequential
+        omp_set_num_threads(1);
     }
-    // numThreads == 0: use default
 
     int result = mes_savgolFilter(data, dataSize, halfWindowSize, filteredData,
                                   polynomialOrder, targetPoint, derivativeOrder);
 
-    omp_set_num_threads(oldNumThreads); // Restore
+    omp_set_num_threads(oldNumThreads);
     return result;
 #else
-    // No OpenMP: ignore numThreads parameter
+    (void)numThreads;
     return mes_savgolFilter(data, dataSize, halfWindowSize, filteredData,
                             polynomialOrder, targetPoint, derivativeOrder);
 #endif
