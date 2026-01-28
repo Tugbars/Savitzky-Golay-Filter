@@ -1,12 +1,24 @@
 /**
- * @file savgol_filter.h
- * @brief Header file for the Savitzky–Golay filter implementation.
- *
- * This header declares the data structures, constants, and functions used in
- * a Savitzky–Golay filtering algorithm for smoothing and derivative estimation.
- *
+ * @file savgolFilter.h
+ * @brief Savitzky-Golay Filter — Public API
+ * 
+ * A digital smoothing filter that fits successive subsets of data points
+ * with a low-degree polynomial using least-squares. Can compute smoothed
+ * values and derivatives.
+ * 
+ * Features:
+ * - Configurable window size and polynomial order
+ * - Multiple boundary handling modes
+ * - Derivative computation (velocity, acceleration, etc.)
+ * - Strided access for struct arrays
+ * - VALID mode for truncated output without boundary artifacts
+ * 
+ * Thread Safety:
+ * - Filter creation/destruction: NOT thread-safe
+ * - Filter application: Thread-safe (filter is read-only after creation)
+ * - Multiple threads can share one filter for concurrent filtering
+ * 
  * @author Tugbars Heptaskin
- * @date 2025-11-10
  */
 
 #ifndef SAVGOL_FILTER_H
@@ -14,179 +26,203 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <stdbool.h>
-
-//-------------------------
-// Constant Definitions
-//-------------------------
-
-/// Maximum window size for the filter (must be an odd number)
-#define MAX_WINDOW 97
-
-/// Define to use the optimized version of GenFact (precomputed values)
-#define OPTIMIZE_GENFACT
-
-#define MAX_ORDER 5
-
-//-------------------------
-// Data Type Definitions
-//-------------------------
-
-/**
- * @brief Minimal raw data structure.
- *
- * Represents a single measurement with a phase angle.
- */
-typedef struct
-{
-    float phaseAngle;
-} MqsRawDataPoint_t;
-
-/**
- * @brief Savitzky–Golay filter configuration.
- *
- * Contains filter parameters such as the half-window size, the polynomial order,
- * the target point in the window, the derivative order, and the time step.
- */
-typedef struct
-{
-    uint8_t halfWindowSize;  /**< Half window size (window size = 2*halfWindowSize+1) */
-    uint8_t polynomialOrder; /**< Order of the polynomial used for fitting */
-    uint8_t targetPoint;     /**< Target point within the window (usually center) */
-    uint8_t derivativeOrder; /**< Order of the derivative to compute (0 for smoothing) */
-    float time_step;         /**< Time step used in the filter */
-} SavitzkyGolayFilterConfig;
-
-/**
- * @brief Savitzky–Golay filter context.
- *
- * Contains the filter configuration and a scaling factor (dt) computed based on the derivative order.
- */
-typedef struct
-{
-    SavitzkyGolayFilterConfig conf; /**< Filter configuration parameters */
-    float dt;                       /**< Scaling factor computed as (time_step)^derivativeOrder */
-} SavitzkyGolayFilter;
-
-/**
- * @brief Context for iterative Gram polynomial evaluation.
- *
- * This context is passed to functions that compute Gram polynomials for use in
- * calculating filter weights.
- */
-typedef struct
-{
-    uint8_t halfWindowSize;  /**< Half window size for the filter */
-    uint8_t targetPoint;     /**< Target point (index offset) in the window */
-    uint8_t derivativeOrder; /**< Order of the derivative */
-} GramPolyContext;
-
-typedef struct
-{
-    bool isComputed;
-    float value;
-} GramPolyCacheEntry;
-
-//-------------------------
-// Function Declarations
-//-------------------------
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
-    /**
-     * @brief Applies the Savitzky–Golay filter to a data array.
-     *
-     * This is the main entry point for filtering a data sequence. It performs error checking,
-     * initializes the filter, and applies the filter to the raw data.
-     *
-     * @param data         Array of raw data points (input).
-     * @param dataSize     Number of data points in the array.
-     * @param halfWindowSize Half-window size (filter window size = 2*halfWindowSize+1).
-     * @param filteredData Array to store the filtered data points (output).
-     * @param polynomialOrder Order of the polynomial used for fitting.
-     * @param targetPoint  The target point in the filter window.
-     * @param derivativeOrder Order of the derivative (0 for smoothing).
-     * @return 0 on success, negative error code on failure.
-     */
-    int mes_savgolFilter(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
-                         MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
-                         uint8_t targetPoint, uint8_t derivativeOrder);
+/*============================================================================
+ * CONFIGURATION CONSTANTS
+ *============================================================================*/
 
-#ifdef SAVGOL_PARALLEL_BUILD
-    /**
-     * @brief Applies the Savitzky–Golay filter with explicit thread count control.
-     *
-     * This function is only available when building with OpenMP support (parallel version).
-     * It provides fine-grained control over the number of threads used for filtering.
-     *
-     * @param data         Array of raw data points (input).
-     * @param dataSize     Number of data points in the array.
-     * @param halfWindowSize Half-window size (filter window size = 2*halfWindowSize+1).
-     * @param filteredData Array to store the filtered data points (output).
-     * @param polynomialOrder Order of the polynomial used for fitting.
-     * @param targetPoint  The target point in the filter window.
-     * @param derivativeOrder Order of the derivative (0 for smoothing).
-     * @param numThreads   Number of threads to use:
-     *                     - 0: Auto-detect (use all available cores)
-     *                     - -1: Force sequential execution (single-threaded)
-     *                     - >0: Use exactly this many threads
-     * @return 0 on success, negative error code on failure.
-     *
-     * @note This function is only available in the parallel build (USE_PARALLEL_SAVGOL=ON).
-     * @note If OpenMP is not available at runtime, this function will execute sequentially
-     *       regardless of the numThreads parameter.
-     */
-    int mes_savgolFilter_threaded(MqsRawDataPoint_t data[], size_t dataSize, uint8_t halfWindowSize,
-                                  MqsRawDataPoint_t filteredData[], uint8_t polynomialOrder,
-                                  uint8_t targetPoint, uint8_t derivativeOrder, int numThreads);
-#endif // SAVGOL_PARALLEL_BUILD
+/** Maximum supported half-window size. Window spans [-n, +n] for n ≤ this. */
+#define SAVGOL_MAX_HALF_WINDOW 32
 
-    /**
-     * @brief Initializes a Savitzky–Golay filter instance.
-     *
-     * Sets the configuration parameters and computes the scaling factor based on the derivative order.
-     *
-     * @param halfWindowSize Half-window size.
-     * @param polynomialOrder Polynomial order.
-     * @param targetPoint Target point within the window.
-     * @param derivativeOrder Derivative order.
-     * @param time_step Time step value.
-     * @return A SavitzkyGolayFilter structure with initialized values.
-     */
-    SavitzkyGolayFilter initFilter(uint8_t halfWindowSize, uint8_t polynomialOrder, uint8_t targetPoint,
-                                   uint8_t derivativeOrder, float time_step);
+/** Maximum window size (derived). */
+#define SAVGOL_MAX_WINDOW (2 * SAVGOL_MAX_HALF_WINDOW + 1)
 
-    /**
-     * @brief Retrieves a Gram polynomial cache entry (for testing/debugging).
-     *
-     * @param shiftedIndex Data index shifted to non-negative range [0, 2n].
-     * @param polyOrder Polynomial order k.
-     * @param derivOrder Derivative order d.
-     * @return Pointer to cache entry, or NULL if indices out of bounds.
-     */
-    const GramPolyCacheEntry *GetGramPolyCacheEntry(int shiftedIndex, uint8_t polyOrder, uint8_t derivOrder);
+/** Maximum polynomial order. */
+#define SAVGOL_MAX_POLY_ORDER 10
 
-    /**
-     * @brief Convenience macro for calling filter with optimal threading.
-     *
-     * Automatically uses threaded version if available, falls back to sequential.
-     *
-     * Example:
-     *   SAVGOL_FILTER_AUTO(data, 1000, 5, filtered, 2, 0, 0, 4);
-     */
-#ifdef SAVGOL_PARALLEL_BUILD
-#define SAVGOL_FILTER_AUTO(data, dataSize, halfWin, filtered, polyOrder, target, deriv, threads) \
-    mes_savgolFilter_threaded(data, dataSize, halfWin, filtered, polyOrder, target, deriv, threads)
-#else
-#define SAVGOL_FILTER_AUTO(data, dataSize, halfWin, filtered, polyOrder, target, deriv, threads) \
-    mes_savgolFilter(data, dataSize, halfWin, filtered, polyOrder, target, deriv)
-#endif
+/** Maximum derivative order. */
+#define SAVGOL_MAX_DERIVATIVE 4
+
+/*============================================================================
+ * TYPES
+ *============================================================================*/
+
+/**
+ * @brief Boundary handling modes for edge samples.
+ * 
+ * When the filter window extends beyond data boundaries:
+ * - POLYNOMIAL: Fit asymmetric polynomials (preserves signal features best)
+ * - REFLECT: Mirror data at boundary
+ * - PERIODIC: Wrap data around (for periodic signals)
+ * - CONSTANT: Extend edge value
+ */
+typedef enum {
+    SAVGOL_BOUNDARY_POLYNOMIAL = 0,  /**< Asymmetric polynomial fit (default) */
+    SAVGOL_BOUNDARY_REFLECT,         /**< Mirror: [d1,d0 | d0,d1,d2...] */
+    SAVGOL_BOUNDARY_PERIODIC,        /**< Wrap: [...dn-1 | d0,d1...] */
+    SAVGOL_BOUNDARY_CONSTANT         /**< Extend edge: [d0,d0 | d0,d1,d2...] */
+} SavgolBoundaryMode;
+
+/**
+ * @brief Filter configuration.
+ * 
+ * @param half_window  Half-window size n. Window spans 2n+1 points.
+ *                     Valid range: [1, SAVGOL_MAX_HALF_WINDOW]
+ * 
+ * @param poly_order   Polynomial order m for least-squares fit.
+ *                     Must be < 2n+1. Higher = more features preserved.
+ *                     Typical values: 2 (quadratic), 3 (cubic), 4 (quartic).
+ * 
+ * @param derivative   Derivative order d.
+ *                     0 = smoothing (default)
+ *                     1 = first derivative (velocity)
+ *                     2 = second derivative (acceleration)
+ *                     Must be ≤ poly_order.
+ * 
+ * @param time_step    Time interval between samples (Δt).
+ *                     Used to scale derivative outputs correctly.
+ *                     Set to 1.0 for smoothing or if output scaling not needed.
+ * 
+ * @param boundary     Boundary handling mode. Default (0) = POLYNOMIAL.
+ */
+typedef struct {
+    uint8_t half_window;
+    uint8_t poly_order;
+    uint8_t derivative;
+    float   time_step;
+    SavgolBoundaryMode boundary;
+} SavgolConfig;
+
+/**
+ * @brief Filter state containing precomputed weights.
+ * 
+ * Created by savgol_create(), destroyed by savgol_destroy().
+ * After creation, all fields are read-only and the filter can be
+ * safely shared across threads.
+ */
+typedef struct SavgolFilter {
+    SavgolConfig config;                              /**< Original configuration */
+    int window_size;                                  /**< 2 * half_window + 1 */
+    float dt_scale;                                   /**< time_step^derivative */
+    float center_weights[SAVGOL_MAX_WINDOW];          /**< Weights for interior */
+    float edge_weights[SAVGOL_MAX_HALF_WINDOW][SAVGOL_MAX_WINDOW]; /**< Edge weights */
+} SavgolFilter;
+
+/*============================================================================
+ * LIFECYCLE
+ *============================================================================*/
+
+/**
+ * @brief Create a filter with the given configuration.
+ * 
+ * Allocates memory and precomputes all filter weights. The returned
+ * filter can be used for multiple calls to savgol_apply().
+ * 
+ * @param config  Filter parameters. Copied internally.
+ * @return Filter handle, or NULL on error (invalid config or allocation failure).
+ * 
+ * @note Call savgol_destroy() when done to free resources.
+ */
+SavgolFilter *savgol_create(const SavgolConfig *config);
+
+/**
+ * @brief Destroy a filter and free resources.
+ * 
+ * @param filter  Filter to destroy. NULL is safe (no-op).
+ */
+void savgol_destroy(SavgolFilter *filter);
+
+/*============================================================================
+ * FILTERING
+ *============================================================================*/
+
+/**
+ * @brief Apply the filter to a contiguous array.
+ * 
+ * @param filter  Filter handle from savgol_create().
+ * @param input   Input data array.
+ * @param output  Output array (may equal input for in-place).
+ * @param length  Number of elements. Must be ≥ window_size.
+ * @return 0 on success, -1 on error.
+ */
+int savgol_apply(const SavgolFilter *filter,
+                 const float *input, float *output, size_t length);
+
+/**
+ * @brief Apply the filter to strided (non-contiguous) data.
+ * 
+ * Useful for filtering a field within an array of structs.
+ * 
+ * Example: Filter the 'value' field of a struct array:
+ * @code
+ *   typedef struct { float time; float value; } Sample;
+ *   Sample data[1000];
+ *   
+ *   savgol_apply_strided(filter,
+ *       data, sizeof(Sample), offsetof(Sample, value),
+ *       data, sizeof(Sample), offsetof(Sample, value),
+ *       1000);
+ * @endcode
+ * 
+ * @param filter     Filter handle.
+ * @param input      Base pointer to input data.
+ * @param in_stride  Byte stride between input elements.
+ * @param in_offset  Byte offset to float field within each element.
+ * @param output     Base pointer to output data.
+ * @param out_stride Byte stride between output elements.
+ * @param out_offset Byte offset to float field within each element.
+ * @param count      Number of elements.
+ * @return 0 on success, -1 on error.
+ */
+int savgol_apply_strided(const SavgolFilter *filter,
+                         const void *input, size_t in_stride, size_t in_offset,
+                         void *output, size_t out_stride, size_t out_offset,
+                         size_t count);
+
+/**
+ * @brief Apply filter with VALID output only (no boundary handling).
+ * 
+ * Outputs only samples where the full window fits within input data.
+ * Output is shorter than input: output_length = input_length - 2*half_window
+ * 
+ * Useful when boundary artifacts are unacceptable and you prefer
+ * shorter output over extrapolated edge values.
+ * 
+ * @param filter       Filter handle.
+ * @param input        Input data array.
+ * @param input_length Length of input array.
+ * @param output       Output array (needs input_length - 2*half_window space).
+ * @return Number of samples written to output, or 0 on error.
+ */
+size_t savgol_apply_valid(const SavgolFilter *filter,
+                          const float *input, size_t input_length,
+                          float *output);
+
+/*============================================================================
+ * CONVENIENCE MACROS
+ *============================================================================*/
+
+/** Create a smoothing filter config (no derivative). */
+#define SAVGOL_SMOOTH(half_win, order) \
+    (SavgolConfig){ .half_window = (half_win), .poly_order = (order), \
+                    .derivative = 0, .time_step = 1.0f, .boundary = SAVGOL_BOUNDARY_POLYNOMIAL }
+
+/** Create a first-derivative filter config. */
+#define SAVGOL_DERIV1(half_win, order, dt) \
+    (SavgolConfig){ .half_window = (half_win), .poly_order = (order), \
+                    .derivative = 1, .time_step = (dt), .boundary = SAVGOL_BOUNDARY_POLYNOMIAL }
+
+/** Create a second-derivative filter config. */
+#define SAVGOL_DERIV2(half_win, order, dt) \
+    (SavgolConfig){ .half_window = (half_win), .poly_order = (order), \
+                    .derivative = 2, .time_step = (dt), .boundary = SAVGOL_BOUNDARY_POLYNOMIAL }
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // SAVGOL_FILTER_H
+#endif /* SAVGOL_FILTER_H */

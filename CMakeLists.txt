@@ -13,7 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # =============================================================================
 # BUILD OPTIONS
 # =============================================================================
-option(USE_PARALLEL_SAVGOL "Build parallel (OpenMP) version of Savitzky-Golay filter" ON)
+option(USE_PARALLEL_SAVGOL "Build parallel (OpenMP) version of Savitzky-Golay filter" OFF)
 
 # Print selected build mode
 if(USE_PARALLEL_SAVGOL)
@@ -51,9 +51,9 @@ FetchContent_MakeAvailable(fff)
 # =============================================================================
 # Conditionally include the appropriate implementation
 if(USE_PARALLEL_SAVGOL)
-    add_subdirectory(src/parallel)
+    #add_subdirectory(src/parallel)
 else()
-    add_subdirectory(src/iterative)
+    add_subdirectory(src)
 endif()
 
 # Always include tests (they should work with either implementation)
