@@ -58,6 +58,14 @@ if(UNIX)
     target_link_libraries(test_savgol_main PRIVATE m)
 endif()
 
+# 2D filter tests
+add_executable(test_savgol2d test_savgol2d.c)
+target_include_directories(test_savgol2d PRIVATE ${INCLUDE_DIR})
+target_link_libraries(test_savgol2d PRIVATE savgol2d)
+if(UNIX)
+    target_link_libraries(test_savgol2d PRIVATE m)
+endif()
+
 # =============================================================================
 # CTest Registration
 # =============================================================================
@@ -65,3 +73,4 @@ endif()
 add_test(NAME SavgolCoreTests COMMAND test_savgol)
 add_test(NAME SavgolStreamTests COMMAND test_savgol_stream)
 add_test(NAME SavgolBenchmark COMMAND test_savgol_main)
+add_test(NAME Savgol2DTests COMMAND test_savgol2d)

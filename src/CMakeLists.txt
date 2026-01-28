@@ -67,3 +67,16 @@ target_link_libraries(savgol_export PRIVATE savgolFilter)
 if(UNIX)
     target_link_libraries(savgol_export PRIVATE m)
 endif()
+
+# =============================================================================
+# 2D Filter Library
+# =============================================================================
+
+add_library(savgol2d STATIC
+    savgol2d.c
+)
+
+target_include_directories(savgol2d PUBLIC ${INCLUDE_DIR})
+if(UNIX)
+    target_link_libraries(savgol2d PUBLIC m)
+endif()
