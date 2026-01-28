@@ -1,8 +1,8 @@
 # Savitzky-Golay Filter Implementation in C
 
 **Author:** Tugbars Heptaskin  
-**Date:** 2025-10-24  
-**Last Updated:** 2025-11-05
+**Date:** 2026-01-28
+**Last Updated:** 2025-01-28
 
 ## Overview
 
@@ -11,10 +11,19 @@ This is a highly-optimized implementation of the Savitzky-Golay filter for data 
 ### Key Features
 
 - ✅ **Production-ready performance**: Multiple layers of optimization for real-world applications
-- ✅ **Embedded-safe**: No heap allocation, no VLAs, static buffers only
+- ✅ **Embedded-safe**: No heap allocation during filtering, static buffers only
 - ✅ **MATLAB-validated**: Output matches MATLAB's Savitzky-Golay filter to floating-point precision
-- ✅ **Comprehensive documentation**: Extensive inline documentation of mathematical foundations and optimization techniques
-- ✅ **Configurable**: Supports both non-causal (centered) and causal (past-only) filtering modes
+- ✅ **Thread-safe**: Filter objects are read-only after creation, safe for concurrent use
+- ✅ **Flexible**: Batch processing, real-time streaming, and coefficient export modes
+- ✅ **Multiple boundary modes**: Polynomial, reflect, periodic, and constant edge handling
+
+## Components
+
+| File | Purpose |
+|------|---------|
+| `savgolFilter.c/h` | **Batch processing** — Create filter once, apply to arrays. Supports multiple boundary modes, strided access, in-place operation. |
+| `savgol_stream.c/h` | **Online streaming** — Real-time sample-by-sample processing with fixed latency of `half_window` samples. |
+| `savgol_export.c` | **Coefficient export** — CLI tool to generate C headers with precomputed weights for MCUs/FPGAs where runtime computation is too expensive. |
 
 ## Mathematical Foundation
 
@@ -33,7 +42,7 @@ The Savitzky-Golay filter performs polynomial least-squares fitting on a sliding
 
 3. **Filter Weights**
    - Each data point gets a weight determined by Gram polynomial projections
-   - Weights are precomputed and reused via convolution
+   - Weights are precomputed at filter creation and reused via convolution
 
 4. **Convolution**
    - Filtered value: y[j] = Σ(i=0 to 2n) w[i] × x[j-n+i]
@@ -45,7 +54,7 @@ This implementation employs five major optimization techniques for a cumulative 
 ### 1. GenFact Lookup Table (1.5-2x speedup)
 - **Problem**: Repeated expensive factorial-like computations
 - **Solution**: Precompute all GenFact values into a 2D table at startup
-- **Trade-off**: ~4KB memory for O(1) lookups instead of O(n) computation
+- **Trade-off**: ~23KB memory for O(1) lookups instead of O(n) computation
 - **Impact**: Eliminates repeated multiplications in weight calculation
 
 ### 2. Static Allocation (embedded-safe)
@@ -61,12 +70,11 @@ Multiple sub-optimizations:
 - **Rolling buffer approach**: O(d) space instead of O(k×d)
 - **Strength reduction**: Hoist divisions (1/n) out of loops
 - **Branch elimination**: Separate d=0 case to avoid conditionals in hot paths
-- **Optional memoization**: Cache computed values when enabled
 
-### 4. Edge Weight Caching (1.5x amortized speedup)
+### 4. Precomputed Edge Weights (1.5x amortized speedup)
 - **Problem**: Edge weights recomputed for every filter application
-- **Solution**: Cache computed edge weights with parameter validation
-- **Key insight**: Leading and trailing edges use same weights (different data order)
+- **Solution**: All edge weights computed once at filter creation
+- **Key insight**: Leading and trailing edges use same weights (different data traversal order)
 
 ### 5. ILP-Optimized Convolution (1.2-1.3x speedup)
 - **Problem**: Serial dependency chains prevent parallel execution
@@ -76,110 +84,93 @@ Multiple sub-optimizations:
   - Apple M-series: 4 FMA units → 4 parallel operations
   - Pairwise reduction for numerical stability
 
-## Performance Validation
+## Configuration Options
 
-The implementation has been validated against MATLAB's `sgolayfilt` function:
+### Filter Parameters
 
-- **Accuracy**: Differences on the order of 10⁻⁶ (floating-point precision limits)
-- **Test case**: 350-point dataset, halfWindow=12, polynomialOrder=4
-- **See**: Included validation plots showing bit-level agreement
+| Parameter | Description | Constraints |
+|-----------|-------------|-------------|
+| `half_window` | Half-window size *n*. Window spans 2n+1 points. | 1 ≤ n ≤ 32 |
+| `poly_order` | Polynomial degree *m* for least-squares fit. Higher values preserve more signal features. | m < 2n+1, typically 2-4 |
+| `derivative` | Derivative order. 0=smoothing, 1=velocity, 2=acceleration. | d ≤ m |
+| `time_step` | Time interval between samples (Δt). Scales derivative output by 1/Δt^d. | > 0 |
+| `boundary` | Edge handling mode (see below). | — |
 
-## Usage
+### Boundary Handling Modes
 
-### Basic Example
+When the filter window extends beyond data boundaries, these modes determine how missing samples are handled:
 
-```c
-#include "savgolFilter.h"
+| Mode | Description | Best For |
+|------|-------------|----------|
+| `SAVGOL_BOUNDARY_POLYNOMIAL` | Fits asymmetric polynomials at edges. Default and highest quality. | General use, preserves signal features |
+| `SAVGOL_BOUNDARY_REFLECT` | Mirrors data at boundary: [d₁,d₀ \| d₀,d₁,d₂...] | Signals with zero slope at edges |
+| `SAVGOL_BOUNDARY_PERIODIC` | Wraps data around: [...d_{n-1} \| d₀,d₁...] | Periodic signals (e.g., circular data) |
+| `SAVGOL_BOUNDARY_CONSTANT` | Extends edge value: [d₀,d₀ \| d₀,d₁,d₂...] | Signals with constant edges |
 
-int main() {
-    // Your input data
-    double dataset[] = { /* your data */ };
-    size_t dataSize = sizeof(dataset) / sizeof(dataset[0]);
-    
-    // Allocate input and output arrays
-    MqsRawDataPoint_t rawData[dataSize];
-    MqsRawDataPoint_t filteredData[dataSize];
-    
-    // Initialize input data
-    for (size_t i = 0; i < dataSize; ++i) {
-        rawData[i].phaseAngle = dataset[i];
-        filteredData[i].phaseAngle = 0.0f;
-    }
+### Derivative Computation
 
-    // Configure filter parameters
-    uint8_t halfWindowSize = 12;      // Window size = 2*12+1 = 25 points
-    uint8_t polynomialOrder = 4;      // 4th-order polynomial fit
-    uint8_t targetPoint = 0;          // Center point (non-causal)
-    uint8_t derivativeOrder = 0;      // 0 = smoothing, 1 = 1st derivative, etc.
-  
-    // Apply filter
-    clock_t tic = clock();
-    int result = mes_savgolFilter(rawData, dataSize, halfWindowSize, 
-                                   filteredData, polynomialOrder, 
-                                   targetPoint, derivativeOrder);
-    clock_t toc = clock();
+The filter can compute smoothed derivatives by setting the `derivative` parameter:
 
-    if (result == 0) {
-        printf("Elapsed: %f seconds\n", (double)(toc - tic) / CLOCKS_PER_SEC);
-        // Use filteredData...
-    } else {
-        printf("Filter failed with error code: %d\n", result);
-    }
-    
-    return 0;
-}
+| Value | Output | Typical Use |
+|-------|--------|-------------|
+| 0 | Smoothed signal | Noise reduction |
+| 1 | First derivative × (1/Δt) | Velocity, rate of change |
+| 2 | Second derivative × (1/Δt²) | Acceleration, curvature |
+
+The `time_step` parameter ensures correct physical units in the output.
+
+## API Overview
+
+### Batch Processing (`savgolFilter.c/h`)
+
+The batch API uses a create/apply/destroy pattern:
+
+1. **Create**: `savgol_create()` allocates filter and precomputes all weights
+2. **Apply**: `savgol_apply()` filters data using precomputed weights (reusable)
+3. **Destroy**: `savgol_destroy()` frees resources
+
+Additional functions:
+- `savgol_apply_strided()` — Filter a field within an array of structs
+- `savgol_apply_valid()` — Output only where full window fits (no edge handling, shorter output)
+
+**Thread Safety**: After creation, the filter object is read-only. Multiple threads can safely share one filter for concurrent filtering of different data.
+
+### Streaming Processing (`savgol_stream.c/h`)
+
+For real-time sample-by-sample processing:
+
+1. **Create**: `savgol_stream_create()` initializes streaming state
+2. **Push**: `savgol_stream_push()` or `savgol_stream_push_full()` processes one sample
+3. **Flush**: `savgol_stream_flush()` outputs remaining samples at end of stream
+4. **Destroy**: `savgol_stream_destroy()` frees resources
+
+**Latency**: Fixed delay of `half_window` samples after buffer fills.
+
+**Output Modes**:
+- `push()` — Simple interface, skips leading edge samples
+- `push_full()` — Complete output including edge handling, total outputs = total inputs
+
+### Coefficient Export (`savgol_export.c`)
+
+Command-line tool for generating C headers with precomputed weights:
+
+```
+savgol_export -n <half_window> -m <poly_order> [-d <derivative>] [-o <output.h>] [-p <prefix>]
 ```
 
-### Configuration Options
+| Option | Description |
+|--------|-------------|
+| `-n` | Half-window size (required) |
+| `-m` | Polynomial order (required) |
+| `-d` | Derivative order (default: 0) |
+| `-o` | Output file (default: stdout) |
+| `-p` | Symbol prefix (default: SAVGOL) |
 
-#### Non-Causal (Centered) Filtering
-```c
-uint8_t targetPoint = 0;  // Uses both past and future data
-```
-- Filter centered on current point
-- Uses symmetric window: [t-n, ..., t, ..., t+n]
-- Best for offline processing where all data is available
-- Produces smoothest results
-
-#### Causal (Real-Time) Filtering
-```c
-uint8_t targetPoint = halfWindowSize;  // Uses only past data
-```
-- Filter uses only present and past data
-- Window extends backward: [t-2n, ..., t]
-- Suitable for real-time applications
-- Introduces phase delay but maintains causality
-
-#### Derivative Computation
-```c
-uint8_t derivativeOrder = 0;  // Smoothing
-uint8_t derivativeOrder = 1;  // First derivative (velocity)
-uint8_t derivativeOrder = 2;  // Second derivative (acceleration)
-```
-
-### Compile-Time Configuration
-
-The implementation supports optional features via preprocessor defines:
-
-```c
-// Enable memoization (trades ~13KB memory for speed when reusing same parameters)
-#define ENABLE_MEMOIZATION
-
-// Alternative: Runtime GenFact precomputation (lower memory, specific to one filter config)
-#define OPTIMIZE_GENFACT
-```
-
-**Recommendation**: Use default settings (lookup table + memoization) for best performance.
-
-## Parameter Constraints
-
-The filter validates all parameters at runtime:
-
-- **Window size**: (2n+1) ≤ data size
-- **Polynomial order**: m < window size (typically m ≤ 4 for most applications)
-- **Target point**: 0 ≤ t ≤ 2n
-- **Half-window size**: n > 0
-- **Maximum window**: Configurable via `MAX_WINDOW` (default: 65 points)
+Generated header includes:
+- Configuration macros (`*_HALF_WINDOW`, `*_POLY_ORDER`, etc.)
+- Center weight array (`*_CENTER_WEIGHTS[]`)
+- Edge weight array (`*_EDGE_WEIGHTS[][]`)
+- Inline apply function (`*_apply()`)
 
 ## Implementation Details
 
@@ -212,12 +203,42 @@ The implementation preserves numerical accuracy through:
 
 ## Memory Requirements
 
-- **Lookup table**: ~4KB (GenFact table, 65×65 floats)
-- **Memoization cache**: ~13KB (when enabled)
-- **Stack per call**: <2KB (fixed-size buffers)
-- **Edge cache**: <8KB (weights for edge cases)
+| Component | Size |
+|-----------|------|
+| Filter object | ~8 KB (center + edge weights) |
+| GenFact table | ~23 KB (shared, initialized once) |
+| Stack per apply | < 1 KB |
+| Streaming state | ~300 bytes + filter reference |
 
-**Total**: ~27KB worst-case (all features enabled)
+## File Layout
+
+```
+include/iterative/
+├── savgolFilter.h      # Batch filter API
+└── savgol_stream.h     # Streaming filter API
+
+src/iterative/
+├── savgolFilter.c      # Batch implementation
+├── savgol_stream.c     # Streaming implementation
+├── savgol_export.c     # Coefficient export tool
+└── CMakeLists.txt
+
+test/iterative/
+├── test_savgol.c       # Batch filter tests
+├── test_savgol_stream.c # Streaming tests
+├── test_savgol_main.c  # Benchmark
+└── CMakeLists.txt
+```
+
+## Build
+
+```bash
+mkdir build && cd build
+cmake ..
+make
+```
+
+Optional: `-DUSE_PARALLEL_SAVGOL=ON` builds OpenMP-parallelized version.
 
 ## Typical Applications
 
@@ -225,28 +246,15 @@ The implementation preserves numerical accuracy through:
 - **Numerical differentiation**: Compute derivatives with noise suppression
 - **Feature extraction**: Detect peaks, valleys, inflection points
 - **Trend analysis**: Extract underlying trends from noisy data
-- **Real-time filtering**: Causal mode for online data processing
+- **Real-time filtering**: Streaming mode for online data processing
+- **Embedded systems**: Export mode for resource-constrained targets
 
-## Error Codes
+## Performance Validation
 
-```c
- 0  : Success
--1  : NULL pointer passed
--2  : Invalid parameters (constraint violation)
-```
+The implementation has been validated against MATLAB's `sgolayfilt` function:
 
-## Branch Information
-
-### `main` branch (current)
-- Scalar implementation with comprehensive optimizations
-- Production-ready, extensively documented
-- Best for general-purpose use and embedded systems
-
-### Future Work
-Potential extensions for specialized use cases:
-- SIMD vectorization (AVX/SSE) for massive datasets
-- GPU acceleration for real-time multi-channel processing
-- Multi-threaded batch processing
+- **Accuracy**: Differences on the order of 10⁻⁶ (floating-point precision limits)
+- **Test case**: 350-point dataset, halfWindow=12, polynomialOrder=4
 
 ## References
 
@@ -256,20 +264,3 @@ Potential extensions for specialized use cases:
 ## License
 
 MIT License
-
-## Citation
-
-If you use this implementation in your research, please cite:
-
-```bibtex
-@software{savgol_optimized_2025,
-  author = {Heptaskin, Tugbars},
-  title = {High-Performance Savitzky-Golay Filter Implementation in C},
-  year = {2025},
-  url = {[Your repository URL]}
-}
-```
-
----
-
-*For detailed implementation notes, see the extensive inline documentation in `src/savgolFilter.c`*
