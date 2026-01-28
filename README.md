@@ -1,7 +1,7 @@
 # Savitzky-Golay Filter Implementation in C
 
 **Author:** Tugbars Heptaskin  
-**Last Updated:** 2025-01-28
+**Last Updated:** 2026-01-28
 
 ## Overview
 
