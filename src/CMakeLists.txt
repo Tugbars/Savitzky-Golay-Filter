@@ -1,5 +1,5 @@
 # =============================================================================
-# Savitzky-Golay Filter Library Build
+# Savitzky-Golay Filter Library Build (src/iterative/CMakeLists.txt)
 # =============================================================================
 
 set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include/iterative)
@@ -16,9 +16,24 @@ target_include_directories(savgolFilter PUBLIC
     ${INCLUDE_DIR}
 )
 
-target_compile_options(savgolFilter PRIVATE
-    -Wall -Wextra -O2
-)
+# =============================================================================
+# Parallel Filter Library (Optional - requires OpenMP)
+# =============================================================================
+
+if(USE_PARALLEL_SAVGOL)
+    find_package(OpenMP)
+    if(OpenMP_C_FOUND)
+        add_library(savgolFilterMT STATIC
+            savgolFilter.c
+        )
+        target_include_directories(savgolFilterMT PUBLIC ${INCLUDE_DIR})
+        target_compile_definitions(savgolFilterMT PRIVATE USE_OPENMP)
+        target_link_libraries(savgolFilterMT PUBLIC OpenMP::OpenMP_C)
+        message(STATUS "Building parallel savgolFilterMT with OpenMP")
+    else()
+        message(WARNING "OpenMP not found, USE_PARALLEL_SAVGOL ignored")
+    endif()
+endif()
 
 # =============================================================================
 # Streaming Filter Library
@@ -32,25 +47,23 @@ target_include_directories(savgolStream PUBLIC
     ${INCLUDE_DIR}
 )
 
-target_link_libraries(savgolStream PUBLIC
-    savgolFilter
-)
-
-target_compile_options(savgolStream PRIVATE
-    -Wall -Wextra -O2
-)
+# Link against sequential or parallel depending on config
+if(USE_PARALLEL_SAVGOL AND TARGET savgolFilterMT)
+    target_link_libraries(savgolStream PUBLIC savgolFilterMT)
+else()
+    target_link_libraries(savgolStream PUBLIC savgolFilter)
+endif()
 
 # =============================================================================
-# Installation (Optional)
+# Coefficient Export Tool
 # =============================================================================
 
-# install(TARGETS savgolFilter savgolStream
-#     ARCHIVE DESTINATION lib
-#     LIBRARY DESTINATION lib
-# )
-# 
-# install(FILES
-#     ${INCLUDE_DIR}/savgolFilter.h
-#     ${INCLUDE_DIR}/savgol_stream.h
-#     DESTINATION include
-# )
+add_executable(savgol_export
+    savgol_export.c
+)
+
+target_include_directories(savgol_export PRIVATE ${INCLUDE_DIR})
+target_link_libraries(savgol_export PRIVATE savgolFilter)
+if(UNIX)
+    target_link_libraries(savgol_export PRIVATE m)
+endif()
