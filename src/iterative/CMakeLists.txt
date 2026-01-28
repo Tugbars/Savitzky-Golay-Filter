@@ -1,34 +1,56 @@
-# Define the source and include directories
-set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+# =============================================================================
+# Savitzky-Golay Filter Library Build
+# =============================================================================
+
 set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include/iterative)
 
-# List the source files
-set(SOURCES
-    ${SRC_DIR}/savgolFilter.c
+# =============================================================================
+# Core Filter Library (Sequential)
+# =============================================================================
+
+add_library(savgolFilter STATIC
+    savgolFilter.c
 )
 
-# List the header files (optional, but good practice for IDEs)
-set(HEADERS
-    ${INCLUDE_DIR}/savgolFilter.h
+target_include_directories(savgolFilter PUBLIC
+    ${INCLUDE_DIR}
 )
 
-# Create a static library
-add_library(savgolFilter STATIC ${SOURCES} ${HEADERS})
+target_compile_options(savgolFilter PRIVATE
+    -Wall -Wextra -O2
+)
 
-# Enable AVX
-if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(savgolFilter PRIVATE -mavx -mfma)
-elseif (CMAKE_C_COMPILER_ID MATCHES "MSVC")
-    target_compile_options(savgolFilter PRIVATE /arch:AVX)
-endif()
+# =============================================================================
+# Streaming Filter Library
+# =============================================================================
 
-# Set include directories for the library
-target_include_directories(savgolFilter PUBLIC ${INCLUDE_DIR})
+add_library(savgolStream STATIC
+    savgol_stream.c
+)
 
-# Link the math library if needed
-target_link_libraries(savgolFilter PRIVATE m)
+target_include_directories(savgolStream PUBLIC
+    ${INCLUDE_DIR}
+)
 
-# Ensure Cygwin runtime symbols are resolved
-if (CYGWIN)
-    target_link_libraries(savgolFilter PUBLIC c cygwin)
-endif()
+target_link_libraries(savgolStream PUBLIC
+    savgolFilter
+)
+
+target_compile_options(savgolStream PRIVATE
+    -Wall -Wextra -O2
+)
+
+# =============================================================================
+# Installation (Optional)
+# =============================================================================
+
+# install(TARGETS savgolFilter savgolStream
+#     ARCHIVE DESTINATION lib
+#     LIBRARY DESTINATION lib
+# )
+# 
+# install(FILES
+#     ${INCLUDE_DIR}/savgolFilter.h
+#     ${INCLUDE_DIR}/savgol_stream.h
+#     DESTINATION include
+# )
