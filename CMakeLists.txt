@@ -53,7 +53,7 @@ FetchContent_MakeAvailable(fff)
 if(USE_PARALLEL_SAVGOL)
     #add_subdirectory(src/parallel)
 else()
-    add_subdirectory(src/iterative)
+    add_subdirectory(src)
 endif()
 
 # Always include tests (they should work with either implementation)
